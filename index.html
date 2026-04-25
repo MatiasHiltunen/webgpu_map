@@ -52,12 +52,38 @@
       text-align: left;
       white-space: pre-wrap;
     }
+
+    #osm-attribution {
+      position: fixed;
+      z-index: 1;
+      right: 10px;
+      bottom: 8px;
+      max-width: min(100vw - 20px, 32em);
+      padding: 4px 8px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.55);
+      color: rgba(255, 255, 255, 0.88);
+      font: 11px/1.35 system-ui, -apple-system, sans-serif;
+      text-align: right;
+      pointer-events: none;
+    }
+
+    #osm-attribution a {
+      color: #9cf;
+      text-decoration: underline;
+      pointer-events: auto;
+    }
   </style>
 </head>
 <body>
   <canvas id="map"></canvas>
   <div id="hud"></div>
   <div id="error"></div>
+  <footer id="osm-attribution" aria-label="Map data attribution">
+    Map: ©
+    <a href="https://www.openstreetmap.org/copyright" rel="license noreferrer" target="_blank" title="OpenStreetMap legal">OpenStreetMap</a>
+    contributors
+  </footer>
 
   <script type="module" src="./dist/demo/main.js"></script>
 </body>
