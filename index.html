@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WebGPU Map MVP demo</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #111;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    #map {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      touch-action: none;
+      cursor: grab;
+    }
+
+    #map:active { cursor: grabbing; }
+
+    #hud {
+      position: fixed;
+      top: 12px;
+      left: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: rgba(0, 0, 0, 0.65);
+      color: white;
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      pointer-events: none;
+      white-space: pre;
+    }
+
+    #error {
+      position: fixed;
+      inset: 0;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      color: white;
+      background: #151515;
+      font: 16px/1.5 system-ui, sans-serif;
+      text-align: left;
+      white-space: pre-wrap;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="map"></canvas>
+  <div id="hud"></div>
+  <div id="error"></div>
+
+  <script type="module" src="./dist/demo/main.js"></script>
+</body>
+</html>
