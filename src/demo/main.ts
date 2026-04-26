@@ -1,5 +1,5 @@
 import { WebGpuMap } from '../WebGpuMap.js';
-import type { BasemapShaderParams } from '../lib/basemapStyle.js';
+import type { BasemapEffectsParams, BasemapShaderParams } from '../lib/basemapStyle.js';
 import type { DrawStyle, GeoJson } from '../lib/drawtools.js';
 
 type DemoCase = {
@@ -59,6 +59,18 @@ const styleInputs = {
   tintColor: colorInput('style-tint-color')
 };
 
+const effectInputs = {
+  targetColor: colorInput('effect-target-color'),
+  tolerance: rangeInput('effect-tolerance'),
+  softness: rangeInput('effect-softness'),
+  bloomColor: colorInput('effect-bloom-color'),
+  bloomIntensity: rangeInput('effect-bloom-intensity'),
+  bloomRadius: rangeInput('effect-bloom-radius'),
+  heightStrength: rangeInput('effect-height-strength'),
+  reliefStrength: rangeInput('effect-relief-strength'),
+  maskPreview: checkboxInput('effect-mask-preview')
+};
+
 const styleOutputs = {
   brightness: rangeOutput(styleInputs.brightness),
   contrast: rangeOutput(styleInputs.contrast),
@@ -70,10 +82,27 @@ const styleOutputs = {
   tintColor: rangeOutput(styleInputs.tintColor)
 };
 
+const effectOutputs = {
+  targetColor: rangeOutput(effectInputs.targetColor),
+  tolerance: rangeOutput(effectInputs.tolerance),
+  softness: rangeOutput(effectInputs.softness),
+  bloomColor: rangeOutput(effectInputs.bloomColor),
+  bloomIntensity: rangeOutput(effectInputs.bloomIntensity),
+  bloomRadius: rangeOutput(effectInputs.bloomRadius),
+  heightStrength: rangeOutput(effectInputs.heightStrength),
+  reliefStrength: rangeOutput(effectInputs.reliefStrength),
+  maskPreview: rangeOutput(effectInputs.maskPreview)
+};
+
 const resetStyleButton = document.getElementById('reset-style');
+const resetEffectsButton = document.getElementById('reset-effects');
 
 if (!(resetStyleButton instanceof HTMLButtonElement)) {
   throw new Error('Expected #reset-style <button> in the document');
+}
+
+if (!(resetEffectsButton instanceof HTMLButtonElement)) {
+  throw new Error('Expected #reset-effects <button> in the document');
 }
 
 function showError(message: unknown) {
@@ -131,6 +160,16 @@ function colorInput(id: string): HTMLInputElement {
   return el;
 }
 
+function checkboxInput(id: string): HTMLInputElement {
+  const el = document.getElementById(id);
+
+  if (!(el instanceof HTMLInputElement) || el.type !== 'checkbox') {
+    throw new Error('Expected #' + id + ' checkbox input');
+  }
+
+  return el;
+}
+
 function rangeOutput(input: HTMLInputElement): HTMLOutputElement {
   const el = controlsEl.querySelector('output[for="' + input.id + '"]');
 
@@ -167,6 +206,18 @@ function updateStyleOutput() {
   styleOutputs.tintColor.value = String(Math.round(numberFromInput(styleInputs.tintStrength) * 100)) + '%';
 }
 
+function updateEffectOutput() {
+  effectOutputs.targetColor.value = 'mask';
+  effectOutputs.tolerance.value = numberFromInput(effectInputs.tolerance).toFixed(3);
+  effectOutputs.softness.value = numberFromInput(effectInputs.softness).toFixed(3);
+  effectOutputs.bloomColor.value = 'glow';
+  effectOutputs.bloomIntensity.value = numberFromInput(effectInputs.bloomIntensity).toFixed(2);
+  effectOutputs.bloomRadius.value = String(Math.round(numberFromInput(effectInputs.bloomRadius)));
+  effectOutputs.heightStrength.value = numberFromInput(effectInputs.heightStrength).toFixed(2);
+  effectOutputs.reliefStrength.value = numberFromInput(effectInputs.reliefStrength).toFixed(2);
+  effectOutputs.maskPreview.value = effectInputs.maskPreview.checked ? 'on' : 'off';
+}
+
 function readBasemapStyle(): BasemapShaderParams {
   return {
     brightness: numberFromInput(styleInputs.brightness),
@@ -180,6 +231,20 @@ function readBasemapStyle(): BasemapShaderParams {
   };
 }
 
+function readBasemapEffects(): BasemapEffectsParams {
+  return {
+    targetColor: hexToRgb(effectInputs.targetColor.value),
+    tolerance: numberFromInput(effectInputs.tolerance),
+    softness: numberFromInput(effectInputs.softness),
+    bloomColor: hexToRgb(effectInputs.bloomColor.value),
+    bloomIntensity: numberFromInput(effectInputs.bloomIntensity),
+    bloomRadius: numberFromInput(effectInputs.bloomRadius),
+    heightStrength: numberFromInput(effectInputs.heightStrength),
+    reliefStrength: numberFromInput(effectInputs.reliefStrength),
+    maskPreview: effectInputs.maskPreview.checked
+  };
+}
+
 function resetStyleControls() {
   styleInputs.brightness.value = '0';
   styleInputs.contrast.value = '1';
@@ -190,6 +255,19 @@ function resetStyleControls() {
   styleInputs.tintStrength.value = '0';
   styleInputs.invert.value = '0';
   updateStyleOutput();
+}
+
+function resetEffectControls() {
+  effectInputs.targetColor.value = '#e0dccd';
+  effectInputs.tolerance.value = '0.08';
+  effectInputs.softness.value = '0.04';
+  effectInputs.bloomColor.value = '#59d9ff';
+  effectInputs.bloomIntensity.value = '0';
+  effectInputs.bloomRadius.value = '10';
+  effectInputs.heightStrength.value = '0';
+  effectInputs.reliefStrength.value = '4';
+  effectInputs.maskPreview.checked = false;
+  updateEffectOutput();
 }
 
 function setCollapsible(
@@ -558,12 +636,25 @@ for (const input of Object.values(styleInputs)) {
   });
 }
 
+for (const input of Object.values(effectInputs)) {
+  input.addEventListener('input', () => {
+    updateEffectOutput();
+    map.setBasemapEffects(readBasemapEffects());
+  });
+}
+
 resetStyleButton.addEventListener('click', () => {
   resetStyleControls();
   map.resetBasemapStyle();
 });
 
+resetEffectsButton.addEventListener('click', () => {
+  resetEffectControls();
+  map.resetBasemapEffects();
+});
+
 resetStyleControls();
+resetEffectControls();
 geoJsonEditor.value = customGeoJsonText();
 applyFeatureDemo();
 

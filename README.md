@@ -31,7 +31,22 @@ map.setBasemapShaderParams({
   tintColor: [0.82, 0.92, 1],
   tintStrength: 0.25
 })
+
+map.setBasemapEffects({
+  targetColor: [0.88, 0.86, 0.8],
+  tolerance: 0.08,
+  softness: 0.04,
+  bloomColor: [0.35, 0.85, 1],
+  bloomIntensity: 0.8,
+  bloomRadius: 12,
+  heightStrength: 0.45,
+  maskPreview: false
+})
 ```
+
+Basemap effects render through an offscreen postprocess path. The current bloom
+implementation creates a color mask from the selected basemap pixels and runs
+separable blur passes before compositing it back to the map.
 
 Check the live demo here: https://matiashiltunen.github.io/webgpu_map/
 - Should work if webgpu is supported by your device
