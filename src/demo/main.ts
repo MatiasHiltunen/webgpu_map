@@ -1,4 +1,5 @@
 import { WebGpuMap } from '../WebGpuMap.js';
+import type { GeoJson } from '../lib/drawtools.js';
 
 const canvas = document.getElementById('map');
 const hud = document.getElementById('hud');
@@ -29,9 +30,65 @@ const map = new WebGpuMap({
       'visible tiles: ' + s.visibleTileCount,
       'fallback draws: ' + s.fallbackDraws,
       'cache: ' + s.cacheSize + ', inflight: ' + s.inflightCount,
-      'markers: ' + s.markerCount
+      'markers: ' + s.markerCount,
+      'geometry vertices: ' + s.geometryVertexCount
     ].join('\n');
   }
+});
+
+const demoGeoJson = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      properties: null,
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [24.821, 60.187],
+          [24.886, 60.168],
+          [24.943, 60.171],
+          [25.002, 60.189]
+        ]
+      }
+    },
+    {
+      type: 'Feature',
+      properties: null,
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [24.91, 60.145],
+            [24.99, 60.147],
+            [24.982, 60.205],
+            [24.905, 60.198],
+            [24.91, 60.145]
+          ]
+        ]
+      }
+    },
+    {
+      type: 'Feature',
+      properties: null,
+      geometry: {
+        type: 'MultiPoint',
+        coordinates: [
+          [24.9384, 60.1699],
+          [24.955, 60.186],
+          [24.904, 60.162]
+        ]
+      }
+    }
+  ]
+} satisfies GeoJson;
+
+map.setGeoJson(demoGeoJson, {
+  fillColor: [0.0, 0.6, 0.95, 0.22],
+  strokeColor: [0.0, 0.78, 1.0, 0.9],
+  strokeWidth: 4,
+  markerColor: [1.0, 0.28, 0.08, 0.9],
+  markerSize: 13
 });
 
 

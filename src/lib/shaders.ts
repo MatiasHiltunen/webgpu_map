@@ -58,6 +58,12 @@ struct Camera {
 
 @group(0) @binding(0) var<uniform> camera : Camera;
 
+fn wrapWorldX(world : vec2<f32>) -> vec2<f32> {
+  let centerX = camera.topLeftWorld.x + camera.viewportSize.x * 0.5;
+  let shift = round((centerX - world.x) / camera.worldSize) * camera.worldSize;
+  return vec2<f32>(world.x + shift, world.y);
+}
+
 struct VSOut {
   @builtin(position) position : vec4<f32>,
   @location(0) local : vec2<f32>,
@@ -72,7 +78,7 @@ fn vsMain(
   @location(3) color : vec4<f32>
 ) -> VSOut {
   var out : VSOut;
-  let world = mercator01 * camera.worldSize + localPos * sizeCss;
+  let world = wrapWorldX(mercator01 * camera.worldSize) + localPos * sizeCss / camera.scale;
   let screen = world - camera.topLeftWorld;
   let ndc = vec2<f32>(
     screen.x / camera.viewportSize.x * 2.0 - 1.0,
@@ -89,5 +95,53 @@ fn fsMain(in : VSOut) -> @location(0) vec4<f32> {
   let r = length(in.local * 2.0);
   let alpha = smoothstep(1.0, 0.82, r) * in.color.a;
   return vec4<f32>(in.color.rgb * alpha, alpha);
+}
+`;
+
+/** @internal */
+export const GEOMETRY_WGSL = `
+struct Camera {
+  topLeftWorld : vec2<f32>,
+  viewportSize : vec2<f32>,
+  worldSize : f32,
+  dpr : f32,
+  zoom : f32,
+  scale : f32,
+};
+
+@group(0) @binding(0) var<uniform> camera : Camera;
+
+fn wrapWorldX(world : vec2<f32>) -> vec2<f32> {
+  let centerX = camera.topLeftWorld.x + camera.viewportSize.x * 0.5;
+  let shift = round((centerX - world.x) / camera.worldSize) * camera.worldSize;
+  return vec2<f32>(world.x + shift, world.y);
+}
+
+struct VSOut {
+  @builtin(position) position : vec4<f32>,
+  @location(0) color : vec4<f32>,
+};
+
+@vertex
+fn vsMain(
+  @location(0) mercator01 : vec2<f32>,
+  @location(1) offsetCss : vec2<f32>,
+  @location(2) color : vec4<f32>
+) -> VSOut {
+  var out : VSOut;
+  let world = wrapWorldX(mercator01 * camera.worldSize) + offsetCss / camera.scale;
+  let screen = world - camera.topLeftWorld;
+  let ndc = vec2<f32>(
+    screen.x / camera.viewportSize.x * 2.0 - 1.0,
+    1.0 - screen.y / camera.viewportSize.y * 2.0
+  );
+  out.position = vec4<f32>(ndc, 0.0, 1.0);
+  out.color = color;
+  return out;
+}
+
+@fragment
+fn fsMain(in : VSOut) -> @location(0) vec4<f32> {
+  return vec4<f32>(in.color.rgb * in.color.a, in.color.a);
 }
 `;

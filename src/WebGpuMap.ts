@@ -11,7 +11,18 @@ import {
   fallbackForTile
 } from './lib/geo.js';
 import { createLruStore, type LruStore } from './lib/lru.js';
-import { TILE_WGSL, MARKER_WGSL } from './lib/shaders.js';
+import {
+  buildGeometryVertices,
+  buildMarkerInstances,
+  DRAW_VERTEX_FLOATS,
+  geoJsonToDrawLayer,
+  MARKER_INSTANCE_FLOATS,
+  type DrawGeometry,
+  type DrawMarker,
+  type DrawStyle,
+  type GeoJson
+} from './lib/drawtools.js';
+import { TILE_WGSL, MARKER_WGSL, GEOMETRY_WGSL } from './lib/shaders.js';
 // import { runMapLibSelfTests } from './lib/selfTest.js';
 import type { FallbackTile } from './lib/geo.js';
 
@@ -50,6 +61,7 @@ export type WebGpuMapStats = {
   cacheSize: number;
   inflightCount: number;
   markerCount: number;
+  geometryVertexCount: number;
 };
 
 export type WebGpuMapOptions = {
@@ -153,9 +165,11 @@ export class WebGpuMap {
   private tileBindGroupLayout: GPUBindGroupLayout | null = null;
   private tilePipeline: GPURenderPipeline | null = null;
   private markerPipeline: GPURenderPipeline | null = null;
+  private geometryPipeline: GPURenderPipeline | null = null;
   private tileVertexBuffer: GPUBuffer | null = null;
   private markerVertexBuffer: GPUBuffer | null = null;
   private markerInstanceBuffer: GPUBuffer | null = null;
+  private geometryVertexBuffer: GPUBuffer | null = null;
   private cameraBuffer: GPUBuffer | null = null;
   private cameraBindGroup: GPUBindGroup | null = null;
   private sampler: GPUSampler | null = null;
@@ -173,6 +187,10 @@ export class WebGpuMap {
   private visibleSignature = '';
   private inflight = new Map<string, TileRec>();
   private markerCount = 0;
+  private markerInstanceData = new Float32Array(0);
+  private markerDataSet = false;
+  private geometryVertexCount = 0;
+  private geometryVertexData = new Float32Array(0);
   private activePointers = new Map<number, PointerSample>();
   private drag: DragState | null = null;
   private pinch: PinchState | null = null;
@@ -241,6 +259,46 @@ export class WebGpuMap {
     this.onPointerCancel = (e) => this.handlePointerCancel(e);
     this.onWheel = (e) => this.handleWheel(e);
     this.onDblClick = (e) => this.handleDblClick(e);
+  }
+
+  setMarkers(markers: readonly DrawMarker[], style: DrawStyle = {}) {
+    this.markerInstanceData = buildMarkerInstances(markers, style, this.opts.maxMarkers);
+    this.markerCount = this.markerInstanceData.length / MARKER_INSTANCE_FLOATS;
+    this.markerDataSet = true;
+    this.uploadMarkerInstances();
+    this.requestFrame();
+  }
+
+  clearMarkers() {
+    this.markerInstanceData = new Float32Array(0);
+    this.markerCount = 0;
+    this.markerDataSet = true;
+    this.requestFrame();
+  }
+
+  setDrawGeometries(geometries: readonly DrawGeometry[], style: DrawStyle = {}) {
+    this.geometryVertexData = buildGeometryVertices(geometries, style);
+    this.geometryVertexCount = this.geometryVertexData.length / DRAW_VERTEX_FLOATS;
+    this.uploadGeometryVertices();
+    this.requestFrame();
+  }
+
+  clearDrawGeometries() {
+    this.geometryVertexData = new Float32Array(0);
+    this.geometryVertexCount = 0;
+    this.uploadGeometryVertices();
+    this.requestFrame();
+  }
+
+  setGeoJson(input: GeoJson, style: DrawStyle = {}) {
+    const layer = geoJsonToDrawLayer(input, style);
+
+    this.setMarkers(layer.markers, style);
+    this.setDrawGeometries(layer.geometries, style);
+  }
+
+  setGeoJSON(input: GeoJson, style: DrawStyle = {}) {
+    this.setGeoJson(input, style);
   }
 
   private tileZ(): number {
@@ -354,6 +412,11 @@ export class WebGpuMap {
       code: MARKER_WGSL
     });
 
+    const geometryShader = this.device.createShaderModule({
+      label: 'geometry shader',
+      code: GEOMETRY_WGSL
+    });
+
     this.tilePipeline = this.device.createRenderPipeline({
       label: 'tile pipeline',
       layout: this.device.createPipelineLayout({
@@ -403,6 +466,41 @@ export class WebGpuMap {
       },
       fragment: {
         module: markerShader,
+        entryPoint: 'fsMain',
+        targets: [
+          {
+            format: this.format,
+            blend: {
+              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
+            }
+          }
+        ]
+      },
+      primitive: { topology: 'triangle-list' }
+    });
+
+    this.geometryPipeline = this.device.createRenderPipeline({
+      label: 'geometry pipeline',
+      layout: this.device.createPipelineLayout({
+        bindGroupLayouts: [this.cameraBindGroupLayout]
+      }),
+      vertex: {
+        module: geometryShader,
+        entryPoint: 'vsMain',
+        buffers: [
+          {
+            arrayStride: DRAW_VERTEX_FLOATS * 4,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x2' },
+              { shaderLocation: 1, offset: 8, format: 'float32x2' },
+              { shaderLocation: 2, offset: 16, format: 'float32x4' }
+            ]
+          }
+        ]
+      },
+      fragment: {
+        module: geometryShader,
         entryPoint: 'fsMain',
         targets: [
           {
@@ -472,11 +570,41 @@ export class WebGpuMap {
     });
   }
 
+  private uploadMarkerInstances() {
+    if (
+      this.device == null ||
+      this.markerInstanceBuffer == null ||
+      this.markerCount === 0
+    ) {
+      return;
+    }
+
+    this.device.queue.writeBuffer(this.markerInstanceBuffer, 0, this.markerInstanceData);
+  }
+
+  private uploadGeometryVertices() {
+    this.geometryVertexBuffer?.destroy();
+    this.geometryVertexBuffer = null;
+
+    if (
+      this.device == null ||
+      this.geometryVertexCount === 0 ||
+      this.geometryVertexData.byteLength === 0
+    ) {
+      return;
+    }
+
+    this.geometryVertexBuffer = this.createBuffer(
+      this.geometryVertexData,
+      GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    );
+  }
+
   private createDemoMarkers() {
-    if (this.device == null || this.markerInstanceBuffer == null) return;
+    if (this.device == null || this.markerInstanceBuffer == null || this.markerDataSet) return;
 
     const count = Math.min(this.opts.demoMarkers, this.opts.maxMarkers);
-    const data = new Float32Array(count * 8);
+    const data = new Float32Array(count * MARKER_INSTANCE_FLOATS);
 
     const centerLat = 60.1699;
     const centerLng = 24.9384;
@@ -484,7 +612,7 @@ export class WebGpuMap {
     for (let i = 0; i < count; i++) {
       const lat = centerLat + (Math.random() - 0.5) * 10;
       const lng = centerLng + (Math.random() - 0.5) * 18;
-      const o = i * 8;
+      const o = i * MARKER_INSTANCE_FLOATS;
       data[o + 0] = lngToX01(lng);
       data[o + 1] = latToY01(lat);
       data[o + 2] = 4 + Math.random() * 8;
@@ -495,11 +623,10 @@ export class WebGpuMap {
       data[o + 7] = 0.75;
     }
 
+    this.markerInstanceData = data;
     this.markerCount = count;
-    
-    if (count > 0) {
-      this.device.queue.writeBuffer(this.markerInstanceBuffer, 0, data);
-    }
+
+    this.uploadMarkerInstances();
   }
 
   private stopKinetic() {
@@ -1011,6 +1138,14 @@ export class WebGpuMap {
       pass.draw(6, 1, 0, 0);
     }
 
+    if (this.geometryVertexCount > 0 && this.geometryPipeline && this.geometryVertexBuffer) {
+
+      pass.setPipeline(this.geometryPipeline);
+      pass.setVertexBuffer(0, this.geometryVertexBuffer);
+      pass.draw(this.geometryVertexCount, 1, 0, 0);
+
+    }
+
     if (this.markerCount > 0 && this.markerPipeline && this.markerVertexBuffer && this.markerInstanceBuffer) {
 
       pass.setPipeline(this.markerPipeline);
@@ -1037,7 +1172,8 @@ export class WebGpuMap {
       fallbackDraws,
       cacheSize: this.tileCache?.size ?? 0,
       inflightCount: this.inflight.size,
-      markerCount: this.markerCount
+      markerCount: this.markerCount,
+      geometryVertexCount: this.geometryVertexCount
     });
   }
 
@@ -1239,6 +1375,8 @@ export class WebGpuMap {
     this.createPipelines();
     this.createBuffers();
     this.createBindGroups();
+    this.uploadMarkerInstances();
+    this.uploadGeometryVertices();
     this.createDemoMarkers();
     
     this.installEvents();
@@ -1304,10 +1442,12 @@ export class WebGpuMap {
     this.tileVertexBuffer?.destroy();
     this.markerVertexBuffer?.destroy();
     this.markerInstanceBuffer?.destroy();
+    this.geometryVertexBuffer?.destroy();
     this.cameraBuffer?.destroy();
     this.tileVertexBuffer = null;
     this.markerVertexBuffer = null;
     this.markerInstanceBuffer = null;
+    this.geometryVertexBuffer = null;
     this.cameraBuffer = null;
 
     this.device?.destroy();
@@ -1316,6 +1456,7 @@ export class WebGpuMap {
     this.format = null;
     this.tilePipeline = null;
     this.markerPipeline = null;
+    this.geometryPipeline = null;
     this.cameraBindGroup = null;
     this.cameraBindGroupLayout = null;
     this.tileBindGroupLayout = null;
