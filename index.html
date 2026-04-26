@@ -26,17 +26,74 @@
 
     #map:active { cursor: grabbing; }
 
-    #hud {
+    .hidden {
+      display: none !important;
+    }
+
+    #hud-panel {
       position: fixed;
       top: 12px;
       left: 12px;
+      z-index: 2;
       padding: 10px 12px;
       border-radius: 10px;
       background: rgba(0, 0, 0, 0.65);
       color: white;
+      pointer-events: auto;
+    }
+
+    .panel-title {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 0 0 8px;
+      color: rgba(255, 255, 255, 0.92);
+      font: 700 12px/1 system-ui, -apple-system, sans-serif;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+    }
+
+    .collapse-button {
+      width: 24px;
+      height: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.1);
+      color: rgba(255, 255, 255, 0.88);
+      cursor: pointer;
+      font: 700 14px/1 system-ui, -apple-system, sans-serif;
+    }
+
+    #hud {
+      margin: 0;
       font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      pointer-events: none;
       white-space: pre;
+    }
+
+    .fab {
+      position: fixed;
+      z-index: 3;
+      min-width: 44px;
+      min-height: 44px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 999px;
+      background: rgba(12, 14, 16, 0.82);
+      color: white;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(14px);
+      cursor: pointer;
+      font: 700 12px/1 system-ui, -apple-system, sans-serif;
+    }
+
+    #hud-fab {
+      top: 12px;
+      left: 12px;
+    }
+
+    #controls-fab {
+      top: 12px;
+      right: 12px;
     }
 
     #error {
@@ -59,6 +116,8 @@
       right: 12px;
       z-index: 2;
       width: min(310px, calc(100vw - 24px));
+      max-height: calc(100vh - 24px);
+      overflow: auto;
       padding: 12px;
       border-radius: 12px;
       background: rgba(12, 14, 16, 0.78);
@@ -69,7 +128,7 @@
     }
 
     #controls h2 {
-      margin: 0 0 10px;
+      margin: 0;
       font: 700 13px/1 system-ui, -apple-system, sans-serif;
       letter-spacing: 0.02em;
     }
@@ -116,10 +175,48 @@
       text-align: right;
     }
 
-    #reset-style {
+    .control-button {
       width: 100%;
       margin-top: 6px;
       cursor: pointer;
+    }
+
+    #geojson-editor-wrap {
+      margin-top: 12px;
+      padding-top: 10px;
+      border-top: 1px solid rgba(255, 255, 255, 0.12);
+    }
+
+    #geojson-editor-wrap p {
+      margin: 6px 0 8px;
+      color: rgba(255, 255, 255, 0.72);
+    }
+
+    #geojson-editor {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: 150px;
+      resize: vertical;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 10px;
+      padding: 9px 10px;
+      background: rgba(0, 0, 0, 0.26);
+      color: white;
+      font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    #geojson-editor-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    #geojson-status {
+      min-height: 16px;
+      margin-top: 7px;
+      color: rgba(255, 255, 255, 0.72);
+      font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
 
     #osm-attribution {
@@ -146,9 +243,20 @@
 </head>
 <body>
   <canvas id="map"></canvas>
-  <div id="hud"></div>
+  <section id="hud-panel" aria-label="Map stats">
+    <div class="panel-title">
+      <span>Stats</span>
+      <button id="hud-collapse" class="collapse-button" type="button" aria-label="Collapse stats">−</button>
+    </div>
+    <pre id="hud"></pre>
+  </section>
+  <button id="hud-fab" class="fab hidden" type="button" aria-controls="hud-panel" aria-expanded="false">Stats</button>
+  <button id="controls-fab" class="fab hidden" type="button" aria-controls="controls" aria-expanded="false">Tools</button>
   <form id="controls">
-    <h2>Demo Controls</h2>
+    <div class="panel-title">
+      <h2>Demo Controls</h2>
+      <button id="controls-collapse" class="collapse-button" type="button" aria-label="Collapse controls">−</button>
+    </div>
     <label>
       Feature
       <select id="feature-demo"></select>
@@ -193,7 +301,19 @@
       <input id="style-invert" type="range" min="0" max="1" step="0.01" value="0" />
       <output for="style-invert">0.00</output>
     </label>
-    <button id="reset-style" type="button">Reset Basemap</button>
+    <button id="reset-style" class="control-button" type="button">Reset Basemap</button>
+    <section id="geojson-editor-wrap" class="hidden" aria-label="Custom GeoJSON editor">
+      <div class="panel-title">
+        <span>GeoJSON Editor</span>
+      </div>
+      <p>Paste a GeoJSON geometry, feature, or feature collection.</p>
+      <textarea id="geojson-editor" spellcheck="false"></textarea>
+      <div id="geojson-editor-actions">
+        <button id="geojson-apply" type="button">Apply GeoJSON</button>
+        <button id="geojson-reset" type="button">Reset Example</button>
+      </div>
+      <div id="geojson-status" role="status"></div>
+    </section>
   </form>
   <div id="error"></div>
   <footer id="osm-attribution" aria-label="Map data attribution">

@@ -6,10 +6,12 @@ type DemoCase = {
   readonly name: string;
   readonly geoJson: GeoJson;
   readonly style: DrawStyle;
+  readonly editable?: boolean;
 };
 
 const canvas = document.getElementById('map');
 const hud = document.getElementById('hud');
+const hudPanel = document.getElementById('hud-panel');
 const errorBox = document.getElementById('error');
 const controls = document.getElementById('controls');
 const featureSelect = document.getElementById('feature-demo');
@@ -18,8 +20,13 @@ if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Expected <canvas id="map"> in the document');
 }
 
-if (hud == null || errorBox == null || !(controls instanceof HTMLFormElement)) {
-  throw new Error('Expected #hud, #error, and #controls in the document');
+if (
+  !(hud instanceof HTMLPreElement) ||
+  !(hudPanel instanceof HTMLElement) ||
+  errorBox == null ||
+  !(controls instanceof HTMLFormElement)
+) {
+  throw new Error('Expected #hud, #hud-panel, #error, and #controls in the document');
 }
 
 if (!(featureSelect instanceof HTMLSelectElement)) {
@@ -27,9 +34,19 @@ if (!(featureSelect instanceof HTMLSelectElement)) {
 }
 
 const hudEl: HTMLElement = hud;
+const hudPanelEl: HTMLElement = hudPanel;
 const errBox: HTMLElement = errorBox;
 const controlsEl: HTMLFormElement = controls;
 const featureSelectEl: HTMLSelectElement = featureSelect;
+const hudFab = button('hud-fab');
+const hudCollapse = button('hud-collapse');
+const controlsFab = button('controls-fab');
+const controlsCollapse = button('controls-collapse');
+const geoJsonEditorWrap = element('geojson-editor-wrap');
+const geoJsonEditor = textarea('geojson-editor');
+const geoJsonApply = button('geojson-apply');
+const geoJsonReset = button('geojson-reset');
+const geoJsonStatus = element('geojson-status');
 
 const styleInputs = {
   brightness: rangeInput('style-brightness'),
@@ -62,6 +79,36 @@ if (!(resetStyleButton instanceof HTMLButtonElement)) {
 function showError(message: unknown) {
   errBox.style.display = 'flex';
   errBox.textContent = String(message == null ? 'Unknown error' : message);
+}
+
+function element(id: string): HTMLElement {
+  const el = document.getElementById(id);
+
+  if (!(el instanceof HTMLElement)) {
+    throw new Error('Expected #' + id + ' element');
+  }
+
+  return el;
+}
+
+function button(id: string): HTMLButtonElement {
+  const el = document.getElementById(id);
+
+  if (!(el instanceof HTMLButtonElement)) {
+    throw new Error('Expected #' + id + ' button');
+  }
+
+  return el;
+}
+
+function textarea(id: string): HTMLTextAreaElement {
+  const el = document.getElementById(id);
+
+  if (!(el instanceof HTMLTextAreaElement)) {
+    throw new Error('Expected #' + id + ' textarea');
+  }
+
+  return el;
 }
 
 function rangeInput(id: string): HTMLInputElement {
@@ -144,6 +191,116 @@ function resetStyleControls() {
   styleInputs.invert.value = '0';
   updateStyleOutput();
 }
+
+function setCollapsible(
+  panel: HTMLElement,
+  fab: HTMLButtonElement,
+  collapsed: boolean
+) {
+  panel.classList.toggle('hidden', collapsed);
+  fab.classList.toggle('hidden', !collapsed);
+  fab.setAttribute('aria-expanded', String(!collapsed));
+}
+
+function setGeoJsonStatus(message: string, ok: boolean) {
+  geoJsonStatus.textContent = message;
+  geoJsonStatus.style.color = ok ? 'rgba(180, 255, 210, 0.86)' : 'rgba(255, 185, 155, 0.92)';
+}
+
+function customGeoJsonText(): string {
+  return JSON.stringify(customGeoJsonExample, null, 2);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+function isPosition(value: unknown): value is readonly [number, number, ...number[]] {
+  return Array.isArray(value) &&
+    value.length >= 2 &&
+    typeof value[0] === 'number' &&
+    typeof value[1] === 'number';
+}
+
+function isPositionArray(value: unknown): value is readonly (readonly [number, number, ...number[]])[] {
+  return Array.isArray(value) && value.every(isPosition);
+}
+
+function isPolygonCoordinates(
+  value: unknown
+): value is readonly (readonly (readonly [number, number, ...number[]])[])[] {
+  return Array.isArray(value) && value.every(isPositionArray);
+}
+
+function isGeoJsonGeometry(value: unknown): boolean {
+  if (!isRecord(value) || typeof value.type !== 'string') return false;
+
+  switch (value.type) {
+    case 'Point':
+      return isPosition(value.coordinates);
+    case 'MultiPoint':
+    case 'LineString':
+      return isPositionArray(value.coordinates);
+    case 'MultiLineString':
+    case 'Polygon':
+      return isPolygonCoordinates(value.coordinates);
+    case 'MultiPolygon':
+      return Array.isArray(value.coordinates) && value.coordinates.every(isPolygonCoordinates);
+    case 'GeometryCollection':
+      return Array.isArray(value.geometries) && value.geometries.every(isGeoJsonGeometry);
+    default:
+      return false;
+  }
+}
+
+function isGeoJson(value: unknown): value is GeoJson {
+  if (!isRecord(value) || typeof value.type !== 'string') return false;
+
+  if (value.type === 'Feature') {
+    return value.geometry === null || isGeoJsonGeometry(value.geometry);
+  }
+
+  if (value.type === 'FeatureCollection') {
+    return Array.isArray(value.features) &&
+      value.features.every((feature) => isRecord(feature) && feature.type === 'Feature' && isGeoJson(feature));
+  }
+
+  return isGeoJsonGeometry(value);
+}
+
+const customGeoJsonExample = {
+  type: 'FeatureCollection',
+  features: [
+    {
+      type: 'Feature',
+      properties: { name: 'custom line' },
+      geometry: {
+        type: 'LineString',
+        coordinates: [
+          [24.84, 60.155],
+          [24.91, 60.177],
+          [24.99, 60.165]
+        ]
+      }
+    },
+    {
+      type: 'Feature',
+      properties: { name: 'custom polygon' },
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [
+            [24.915, 60.19],
+            [24.975, 60.188],
+            [24.982, 60.225],
+            [24.905, 60.218],
+            [24.915, 60.19]
+          ]
+        ]
+      }
+    }
+  ]
+} satisfies GeoJson;
 
 const demoCases: readonly DemoCase[] = [
   {
@@ -291,6 +448,18 @@ const demoCases: readonly DemoCase[] = [
       markerColor: [1.0, 0.28, 0.08, 0.9],
       markerSize: 13
     }
+  },
+  {
+    name: 'Custom GeoJSON',
+    geoJson: customGeoJsonExample,
+    style: {
+      fillColor: [0.0, 0.62, 0.95, 0.22],
+      strokeColor: [0.0, 0.86, 1.0, 0.92],
+      strokeWidth: 1.35,
+      markerColor: [1.0, 0.3, 0.08, 0.9],
+      markerSize: 13
+    },
+    editable: true
   }
 ];
 
@@ -315,7 +484,33 @@ const map = new WebGpuMap({
 function applyFeatureDemo() {
   const demo = demoCases[featureSelectEl.selectedIndex] ?? demoCases[0]!;
 
+  geoJsonEditorWrap.classList.toggle('hidden', demo.editable !== true);
+
+  if (demo.editable === true) {
+    applyCustomGeoJson();
+    return;
+  }
+
+  setGeoJsonStatus('', true);
   map.setGeoJson(demo.geoJson, demo.style);
+}
+
+function applyCustomGeoJson() {
+  const demo = demoCases[featureSelectEl.selectedIndex] ?? demoCases[0]!;
+
+  try {
+    const parsed: unknown = JSON.parse(geoJsonEditor.value);
+
+    if (!isGeoJson(parsed)) {
+      setGeoJsonStatus('Invalid GeoJSON shape.', false);
+      return;
+    }
+
+    map.setGeoJson(parsed, demo.style);
+    setGeoJsonStatus('Applied custom GeoJSON.', true);
+  } catch (err: unknown) {
+    setGeoJsonStatus(err instanceof Error ? err.message : 'Could not parse JSON.', false);
+  }
 }
 
 for (const [index, demo] of demoCases.entries()) {
@@ -330,7 +525,30 @@ controlsEl.addEventListener('submit', (event) => {
   event.preventDefault();
 });
 
+hudCollapse.addEventListener('click', () => {
+  setCollapsible(hudPanelEl, hudFab, true);
+});
+
+hudFab.addEventListener('click', () => {
+  setCollapsible(hudPanelEl, hudFab, false);
+});
+
+controlsCollapse.addEventListener('click', () => {
+  setCollapsible(controlsEl, controlsFab, true);
+});
+
+controlsFab.addEventListener('click', () => {
+  setCollapsible(controlsEl, controlsFab, false);
+});
+
 featureSelectEl.addEventListener('change', applyFeatureDemo);
+
+geoJsonApply.addEventListener('click', applyCustomGeoJson);
+
+geoJsonReset.addEventListener('click', () => {
+  geoJsonEditor.value = customGeoJsonText();
+  applyCustomGeoJson();
+});
 
 for (const input of Object.values(styleInputs)) {
   input.addEventListener('input', () => {
@@ -345,6 +563,7 @@ resetStyleButton.addEventListener('click', () => {
 });
 
 resetStyleControls();
+geoJsonEditor.value = customGeoJsonText();
 applyFeatureDemo();
 
 void map.init().catch((err: unknown) => {
