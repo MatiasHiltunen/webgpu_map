@@ -72,12 +72,13 @@ export type GeoJsonFeatureCollection = {
 export type GeoJson = GeoJsonGeometry | GeoJsonFeature | GeoJsonFeatureCollection;
 
 export const DRAW_VERTEX_FLOATS = 8;
+export const LINE_INSTANCE_FLOATS = 10;
 export const MARKER_INSTANCE_FLOATS = 8;
 
 const DEFAULT_FILL: DrawColor = [0.1, 0.55, 1, 0.18];
 const DEFAULT_STROKE: DrawColor = [0.05, 0.58, 1, 0.92];
 const DEFAULT_MARKER: DrawColor = [1, 0.25, 0.08, 0.88];
-const DEFAULT_STROKE_WIDTH = 3;
+const DEFAULT_STROKE_WIDTH = 1.5;
 const DEFAULT_MARKER_SIZE = 10;
 const EPSILON = 1e-10;
 
@@ -162,36 +163,48 @@ export function buildGeometryVertices(
   const vertices: number[] = [];
 
   for (const geometry of geometries) {
-    if (geometry.type === 'line') {
-      const color = rgba(resolveColor(geometry.color, style.strokeColor), DEFAULT_STROKE);
-      const width = Math.max(0, geometry.width ?? style.strokeWidth ?? DEFAULT_STROKE_WIDTH);
+    if (geometry.type === 'polygon') {
+      const fill = rgbaOrNull(resolveColor(geometry.fillColor, style.fillColor), DEFAULT_FILL);
 
-      if (color[3] > 0 && width > 0) {
-        appendLine(vertices, geometry.coordinates, color, width, false);
-      }
-      continue;
-    }
-
-    const fill = rgbaOrNull(resolveColor(geometry.fillColor, style.fillColor), DEFAULT_FILL);
-
-    if (fill != null && fill[3] > 0 && geometry.rings.length > 0) {
-      appendPolygonFill(vertices, geometry.rings[0]!, fill);
-    }
-
-    const stroke = rgbaOrNull(resolveColor(geometry.strokeColor, style.strokeColor), DEFAULT_STROKE);
-    const strokeWidth = Math.max(
-      0,
-      geometry.strokeWidth ?? style.strokeWidth ?? DEFAULT_STROKE_WIDTH
-    );
-
-    if (stroke != null && stroke[3] > 0 && strokeWidth > 0) {
-      for (const ring of geometry.rings) {
-        appendLine(vertices, ring, stroke, strokeWidth, true);
+      if (fill != null && fill[3] > 0 && geometry.rings.length > 0) {
+        appendPolygonFill(vertices, geometry.rings, fill);
       }
     }
   }
 
   return new Float32Array(vertices);
+}
+
+export function buildLineSegmentInstances(
+  geometries: readonly DrawGeometry[],
+  style: DrawStyle = {}
+): Float32Array {
+  const instances: number[] = [];
+
+  for (const geometry of geometries) {
+    if (geometry.type === 'line') {
+      const color = rgba(resolveColor(geometry.color, style.strokeColor), DEFAULT_STROKE);
+      const width = Math.max(0, geometry.width ?? style.strokeWidth ?? DEFAULT_STROKE_WIDTH);
+
+      if (color[3] > 0 && width > 0) {
+        appendLineSegments(instances, geometry.coordinates, color, width, false);
+      }
+    } else {
+      const stroke = rgbaOrNull(resolveColor(geometry.strokeColor, style.strokeColor), DEFAULT_STROKE);
+      const strokeWidth = Math.max(
+        0,
+        geometry.strokeWidth ?? style.strokeWidth ?? DEFAULT_STROKE_WIDTH
+      );
+
+      if (stroke != null && stroke[3] > 0 && strokeWidth > 0) {
+        for (const ring of geometry.rings) {
+          appendLineSegments(instances, ring, stroke, strokeWidth, true);
+        }
+      }
+    }
+  }
+
+  return new Float32Array(instances);
 }
 
 export function projectPosition(position: DrawPosition): MercatorPoint {
@@ -269,7 +282,7 @@ function appendGeometry(
   }
 }
 
-function appendLine(
+function appendLineSegments(
   out: number[],
   coordinates: readonly DrawPosition[],
   color: Rgba,
@@ -286,39 +299,45 @@ function appendLine(
     const a = points[i]!;
     const b = points[(i + 1) % points.length]!;
 
-    appendSegment(out, a, b, color, width);
+    appendSegmentInstance(out, a, b, color, width);
   }
 }
 
-function appendSegment(out: number[], a: MercatorPoint, b: MercatorPoint, color: Rgba, width: number) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const length = Math.hypot(dx, dy);
+function appendSegmentInstance(
+  out: number[],
+  a: MercatorPoint,
+  b: MercatorPoint,
+  color: Rgba,
+  width: number
+) {
+  if (Math.hypot(b.x - a.x, b.y - a.y) <= EPSILON) return;
 
-  if (length <= EPSILON) return;
-
-  const half = width / 2;
-  const ox = (-dy / length) * half;
-  const oy = (dx / length) * half;
-
-  pushVertex(out, a, ox, oy, color);
-  pushVertex(out, b, ox, oy, color);
-  pushVertex(out, b, -ox, -oy, color);
-  pushVertex(out, a, ox, oy, color);
-  pushVertex(out, b, -ox, -oy, color);
-  pushVertex(out, a, -ox, -oy, color);
+  out.push(
+    a.x,
+    a.y,
+    b.x,
+    b.y,
+    width,
+    0,
+    color[0],
+    color[1],
+    color[2],
+    color[3]
+  );
 }
 
-function appendPolygonFill(out: number[], ring: readonly DrawPosition[], color: Rgba) {
-  const points = cleanPath(unwrapPath(ring.map(projectPosition)), true);
+function appendPolygonFill(
+  out: number[],
+  rings: readonly (readonly DrawPosition[])[],
+  color: Rgba
+) {
+  const paths = rings
+    .map((ring) => cleanPath(unwrapPath(ring.map(projectPosition)), true))
+    .filter((ring) => ring.length >= 3);
 
-  if (points.length < 3) return;
+  if (paths.length === 0) return;
 
-  const indices = triangulateRing(points);
-
-  for (const index of indices) {
-    pushVertex(out, points[index]!, 0, 0, color);
-  }
+  appendEvenOddFill(out, paths, color);
 }
 
 function pushVertex(out: number[], point: MercatorPoint, offsetX: number, offsetY: number, color: Rgba) {
@@ -371,108 +390,86 @@ function unwrapPath(points: readonly MercatorPoint[]): MercatorPoint[] {
   return out;
 }
 
-function triangulateRing(points: readonly MercatorPoint[]): number[] {
-  const area = signedArea(points);
+function appendEvenOddFill(out: number[], paths: readonly MercatorPoint[][], color: Rgba) {
+  const xs = uniqueSortedXs(paths);
 
-  if (Math.abs(area) <= EPSILON) return [];
+  for (let i = 0; i < xs.length - 1; i++) {
+    const x0 = xs[i]!;
+    const x1 = xs[i + 1]!;
+    const dx = x1 - x0;
 
-  const ccw = area > 0;
-  const remaining = points.map((_, i) => i);
-  const triangles: number[] = [];
-  let guard = 0;
+    if (dx <= EPSILON) continue;
 
-  while (remaining.length > 3 && guard < points.length * points.length) {
-    guard++;
+    const inset = Math.min(dx * 1e-9, 1e-10);
+    const leftX = x0 + inset;
+    const rightX = x1 - inset;
 
-    let clipped = false;
+    if (rightX <= leftX) continue;
 
-    for (let i = 0; i < remaining.length; i++) {
-      const prevIndex = remaining[(i + remaining.length - 1) % remaining.length]!;
-      const currIndex = remaining[i]!;
-      const nextIndex = remaining[(i + 1) % remaining.length]!;
-      const a = points[prevIndex]!;
-      const b = points[currIndex]!;
-      const c = points[nextIndex]!;
+    const left = polygonIntersectionsAtX(paths, leftX);
+    const right = polygonIntersectionsAtX(paths, rightX);
+    const pairCount = Math.min(left.length, right.length);
 
-      if (!isConvex(a, b, c, ccw)) continue;
-      if (containsAnyPoint(points, remaining, prevIndex, currIndex, nextIndex)) continue;
+    for (let j = 0; j + 1 < pairCount; j += 2) {
+      const leftA = left[j]!;
+      const leftB = left[j + 1]!;
+      const rightA = right[j]!;
+      const rightB = right[j + 1]!;
 
-      triangles.push(prevIndex, currIndex, nextIndex);
-      remaining.splice(i, 1);
-      clipped = true;
-      break;
+      if (Math.abs(leftB - leftA) <= EPSILON && Math.abs(rightB - rightA) <= EPSILON) continue;
+
+      pushVertex(out, { x: leftX, y: leftA }, 0, 0, color);
+      pushVertex(out, { x: rightX, y: rightA }, 0, 0, color);
+      pushVertex(out, { x: rightX, y: rightB }, 0, 0, color);
+      pushVertex(out, { x: leftX, y: leftA }, 0, 0, color);
+      pushVertex(out, { x: rightX, y: rightB }, 0, 0, color);
+      pushVertex(out, { x: leftX, y: leftB }, 0, 0, color);
     }
+  }
+}
 
-    if (!clipped) return fanTriangulate(points);
+function uniqueSortedXs(paths: readonly MercatorPoint[][]): number[] {
+  const xs: number[] = [];
+
+  for (const path of paths) {
+    for (const point of path) xs.push(point.x);
   }
 
-  if (remaining.length === 3) {
-    triangles.push(remaining[0]!, remaining[1]!, remaining[2]!);
+  xs.sort((a, b) => a - b);
+
+  const out: number[] = [];
+
+  for (const x of xs) {
+    const prev = out[out.length - 1];
+
+    if (prev == null || Math.abs(x - prev) > EPSILON) out.push(x);
   }
 
-  return triangles;
+  return out;
 }
 
-function fanTriangulate(points: readonly MercatorPoint[]): number[] {
-  const triangles: number[] = [];
+function polygonIntersectionsAtX(paths: readonly MercatorPoint[][], x: number): number[] {
+  const ys: number[] = [];
 
-  for (let i = 1; i < points.length - 1; i++) {
-    triangles.push(0, i, i + 1);
+  for (const path of paths) {
+    for (let i = 0; i < path.length; i++) {
+      const a = path[i]!;
+      const b = path[(i + 1) % path.length]!;
+      const minX = Math.min(a.x, b.x);
+      const maxX = Math.max(a.x, b.x);
+
+      if (maxX - minX <= EPSILON) continue;
+      if (x <= minX || x > maxX) continue;
+
+      const t = (x - a.x) / (b.x - a.x);
+
+      ys.push(a.y + (b.y - a.y) * t);
+    }
   }
 
-  return triangles;
-}
+  ys.sort((a, b) => a - b);
 
-function containsAnyPoint(
-  points: readonly MercatorPoint[],
-  remaining: readonly number[],
-  prevIndex: number,
-  currIndex: number,
-  nextIndex: number
-): boolean {
-  const a = points[prevIndex]!;
-  const b = points[currIndex]!;
-  const c = points[nextIndex]!;
-
-  for (const index of remaining) {
-    if (index === prevIndex || index === currIndex || index === nextIndex) continue;
-    if (pointInTriangle(points[index]!, a, b, c)) return true;
-  }
-
-  return false;
-}
-
-function pointInTriangle(p: MercatorPoint, a: MercatorPoint, b: MercatorPoint, c: MercatorPoint) {
-  const ab = cross(a, b, p);
-  const bc = cross(b, c, p);
-  const ca = cross(c, a, p);
-  const hasNegative = ab < -EPSILON || bc < -EPSILON || ca < -EPSILON;
-  const hasPositive = ab > EPSILON || bc > EPSILON || ca > EPSILON;
-
-  return !(hasNegative && hasPositive);
-}
-
-function isConvex(a: MercatorPoint, b: MercatorPoint, c: MercatorPoint, ccw: boolean) {
-  const value = cross(a, b, c);
-
-  return ccw ? value > EPSILON : value < -EPSILON;
-}
-
-function cross(a: MercatorPoint, b: MercatorPoint, c: MercatorPoint) {
-  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-}
-
-function signedArea(points: readonly MercatorPoint[]) {
-  let area = 0;
-
-  for (let i = 0; i < points.length; i++) {
-    const a = points[i]!;
-    const b = points[(i + 1) % points.length]!;
-
-    area += a.x * b.y - b.x * a.y;
-  }
-
-  return area / 2;
+  return ys;
 }
 
 function samePoint(a: MercatorPoint, b: MercatorPoint) {

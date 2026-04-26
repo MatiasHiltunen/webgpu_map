@@ -53,6 +53,75 @@
       white-space: pre-wrap;
     }
 
+    #controls {
+      position: fixed;
+      top: 12px;
+      right: 12px;
+      z-index: 2;
+      width: min(310px, calc(100vw - 24px));
+      padding: 12px;
+      border-radius: 12px;
+      background: rgba(12, 14, 16, 0.78);
+      color: white;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.24);
+      backdrop-filter: blur(14px);
+      font: 12px/1.35 system-ui, -apple-system, sans-serif;
+    }
+
+    #controls h2 {
+      margin: 0 0 10px;
+      font: 700 13px/1 system-ui, -apple-system, sans-serif;
+      letter-spacing: 0.02em;
+    }
+
+    #controls label {
+      display: grid;
+      grid-template-columns: 86px minmax(0, 1fr) 42px;
+      gap: 8px;
+      align-items: center;
+      margin: 8px 0;
+    }
+
+    #controls label:first-of-type {
+      grid-template-columns: 86px minmax(0, 1fr);
+    }
+
+    #controls select,
+    #controls input,
+    #controls button {
+      accent-color: #48c4ff;
+      font: inherit;
+    }
+
+    #controls select,
+    #controls button {
+      min-height: 28px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.1);
+      color: white;
+    }
+
+    #controls input[type="color"] {
+      width: 100%;
+      min-height: 28px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+    }
+
+    #controls output {
+      color: rgba(255, 255, 255, 0.72);
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    #reset-style {
+      width: 100%;
+      margin-top: 6px;
+      cursor: pointer;
+    }
+
     #osm-attribution {
       position: fixed;
       z-index: 1;
@@ -78,6 +147,54 @@
 <body>
   <canvas id="map"></canvas>
   <div id="hud"></div>
+  <form id="controls">
+    <h2>Demo Controls</h2>
+    <label>
+      Feature
+      <select id="feature-demo"></select>
+    </label>
+    <label>
+      Bright
+      <input id="style-brightness" type="range" min="-0.35" max="0.35" step="0.01" value="0" />
+      <output for="style-brightness">0.00</output>
+    </label>
+    <label>
+      Contrast
+      <input id="style-contrast" type="range" min="0.55" max="1.8" step="0.01" value="1" />
+      <output for="style-contrast">1.00</output>
+    </label>
+    <label>
+      Saturation
+      <input id="style-saturation" type="range" min="0" max="1.8" step="0.01" value="1" />
+      <output for="style-saturation">1.00</output>
+    </label>
+    <label>
+      Gamma
+      <input id="style-gamma" type="range" min="0.6" max="1.8" step="0.01" value="1" />
+      <output for="style-gamma">1.00</output>
+    </label>
+    <label>
+      Hue
+      <input id="style-hue" type="range" min="-180" max="180" step="1" value="0" />
+      <output for="style-hue">0</output>
+    </label>
+    <label>
+      Tint
+      <input id="style-tint-color" type="color" value="#ffffff" />
+      <output for="style-tint-color">0%</output>
+    </label>
+    <label>
+      Tint Amt
+      <input id="style-tint-strength" type="range" min="0" max="1" step="0.01" value="0" />
+      <output for="style-tint-strength">0.00</output>
+    </label>
+    <label>
+      Invert
+      <input id="style-invert" type="range" min="0" max="1" step="0.01" value="0" />
+      <output for="style-invert">0.00</output>
+    </label>
+    <button id="reset-style" type="button">Reset Basemap</button>
+  </form>
   <div id="error"></div>
   <footer id="osm-attribution" aria-label="Map data attribution">
     Map: ©

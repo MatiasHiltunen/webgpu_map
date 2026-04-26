@@ -12,17 +12,27 @@ import {
 } from './lib/geo.js';
 import { createLruStore, type LruStore } from './lib/lru.js';
 import {
+  BASEMAP_SHADER_PARAM_FLOATS,
+  DEFAULT_BASEMAP_SHADER_PARAMS,
+  packBasemapShaderParams,
+  resolveBasemapShaderParams,
+  type BasemapShaderParams,
+  type ResolvedBasemapShaderParams
+} from './lib/basemapStyle.js';
+import {
+  buildLineSegmentInstances,
   buildGeometryVertices,
   buildMarkerInstances,
   DRAW_VERTEX_FLOATS,
   geoJsonToDrawLayer,
+  LINE_INSTANCE_FLOATS,
   MARKER_INSTANCE_FLOATS,
   type DrawGeometry,
   type DrawMarker,
   type DrawStyle,
   type GeoJson
 } from './lib/drawtools.js';
-import { TILE_WGSL, MARKER_WGSL, GEOMETRY_WGSL } from './lib/shaders.js';
+import { TILE_WGSL, MARKER_WGSL, GEOMETRY_WGSL, LINE_WGSL } from './lib/shaders.js';
 // import { runMapLibSelfTests } from './lib/selfTest.js';
 import type { FallbackTile } from './lib/geo.js';
 
@@ -41,6 +51,7 @@ type ResolvedWebGpuMapOptions = {
   tileRequestInit?: RequestInit;
   initialCenter?: { lat: number; lng: number } | { x01: number; y01: number };
   initialZoom?: number;
+  initialBasemapStyle?: BasemapShaderParams;
 };
 
 const DEFAULT_TILE_SIZE = 256;
@@ -62,6 +73,7 @@ export type WebGpuMapStats = {
   inflightCount: number;
   markerCount: number;
   geometryVertexCount: number;
+  lineSegmentCount: number;
 };
 
 export type WebGpuMapOptions = {
@@ -82,6 +94,7 @@ export type WebGpuMapOptions = {
   tileRequestInit?: RequestInit;
   initialCenter?: { lat: number; lng: number } | { x01: number; y01: number };
   initialZoom?: number;
+  initialBasemapStyle?: BasemapShaderParams;
   /**
    * Called after each drawn frame with debug / HUD-friendly stats.
    * Hook up to your UI; omit to skip.
@@ -166,11 +179,15 @@ export class WebGpuMap {
   private tilePipeline: GPURenderPipeline | null = null;
   private markerPipeline: GPURenderPipeline | null = null;
   private geometryPipeline: GPURenderPipeline | null = null;
+  private linePipeline: GPURenderPipeline | null = null;
   private tileVertexBuffer: GPUBuffer | null = null;
   private markerVertexBuffer: GPUBuffer | null = null;
   private markerInstanceBuffer: GPUBuffer | null = null;
   private geometryVertexBuffer: GPUBuffer | null = null;
+  private lineVertexBuffer: GPUBuffer | null = null;
+  private lineInstanceBuffer: GPUBuffer | null = null;
   private cameraBuffer: GPUBuffer | null = null;
+  private basemapStyleBuffer: GPUBuffer | null = null;
   private cameraBindGroup: GPUBindGroup | null = null;
   private sampler: GPUSampler | null = null;
 
@@ -191,6 +208,9 @@ export class WebGpuMap {
   private markerDataSet = false;
   private geometryVertexCount = 0;
   private geometryVertexData = new Float32Array(0);
+  private lineSegmentCount = 0;
+  private lineInstanceData = new Float32Array(0);
+  private basemapStyle: ResolvedBasemapShaderParams = DEFAULT_BASEMAP_SHADER_PARAMS;
   private activePointers = new Map<number, PointerSample>();
   private drag: DragState | null = null;
   private pinch: PinchState | null = null;
@@ -198,6 +218,7 @@ export class WebGpuMap {
   
   private readonly cameraUniform = new Float32Array(8);
   private readonly tileUniform = new Float32Array(8);
+  private readonly basemapStyleUniform = new Float32Array(BASEMAP_SHADER_PARAM_FLOATS);
 
   private onResize: () => void;
   private onPointerDown: (e: PointerEvent) => void;
@@ -242,10 +263,12 @@ export class WebGpuMap {
       onStats: options.onStats ?? (() => {}),
       tileRequestInit: options.tileRequestInit,
       initialCenter: options.initialCenter,
-      initialZoom: options.initialZoom
+      initialZoom: options.initialZoom,
+      initialBasemapStyle: options.initialBasemapStyle
     };
     
     this.opts = resolved;
+    this.basemapStyle = resolveBasemapShaderParams(options.initialBasemapStyle);
 
     this.onResize = () => {
       this.resize();
@@ -279,14 +302,20 @@ export class WebGpuMap {
   setDrawGeometries(geometries: readonly DrawGeometry[], style: DrawStyle = {}) {
     this.geometryVertexData = buildGeometryVertices(geometries, style);
     this.geometryVertexCount = this.geometryVertexData.length / DRAW_VERTEX_FLOATS;
+    this.lineInstanceData = buildLineSegmentInstances(geometries, style);
+    this.lineSegmentCount = this.lineInstanceData.length / LINE_INSTANCE_FLOATS;
     this.uploadGeometryVertices();
+    this.uploadLineSegments();
     this.requestFrame();
   }
 
   clearDrawGeometries() {
     this.geometryVertexData = new Float32Array(0);
     this.geometryVertexCount = 0;
+    this.lineInstanceData = new Float32Array(0);
+    this.lineSegmentCount = 0;
     this.uploadGeometryVertices();
+    this.uploadLineSegments();
     this.requestFrame();
   }
 
@@ -299,6 +328,22 @@ export class WebGpuMap {
 
   setGeoJSON(input: GeoJson, style: DrawStyle = {}) {
     this.setGeoJson(input, style);
+  }
+
+  setBasemapStyle(params: BasemapShaderParams) {
+    this.basemapStyle = resolveBasemapShaderParams(params, this.basemapStyle);
+    this.uploadBasemapStyle();
+    this.requestFrame();
+  }
+
+  setBasemapShaderParams(params: BasemapShaderParams) {
+    this.setBasemapStyle(params);
+  }
+
+  resetBasemapStyle() {
+    this.basemapStyle = DEFAULT_BASEMAP_SHADER_PARAMS;
+    this.uploadBasemapStyle();
+    this.requestFrame();
   }
 
   private tileZ(): number {
@@ -387,6 +432,11 @@ export class WebGpuMap {
           binding: 2,
           visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
           buffer: { type: 'uniform' }
+        },
+        {
+          binding: 3,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: { type: 'uniform' }
         }
       ]
     });
@@ -415,6 +465,11 @@ export class WebGpuMap {
     const geometryShader = this.device.createShaderModule({
       label: 'geometry shader',
       code: GEOMETRY_WGSL
+    });
+
+    const lineShader = this.device.createShaderModule({
+      label: 'line shader',
+      code: LINE_WGSL
     });
 
     this.tilePipeline = this.device.createRenderPipeline({
@@ -514,6 +569,47 @@ export class WebGpuMap {
       },
       primitive: { topology: 'triangle-list' }
     });
+
+    this.linePipeline = this.device.createRenderPipeline({
+      label: 'line pipeline',
+      layout: this.device.createPipelineLayout({
+        bindGroupLayouts: [this.cameraBindGroupLayout]
+      }),
+      vertex: {
+        module: lineShader,
+        entryPoint: 'vsMain',
+        buffers: [
+          {
+            arrayStride: 8,
+            attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }]
+          },
+          {
+            arrayStride: LINE_INSTANCE_FLOATS * 4,
+            stepMode: 'instance',
+            attributes: [
+              { shaderLocation: 1, offset: 0, format: 'float32x2' },
+              { shaderLocation: 2, offset: 8, format: 'float32x2' },
+              { shaderLocation: 3, offset: 16, format: 'float32' },
+              { shaderLocation: 4, offset: 24, format: 'float32x4' }
+            ]
+          }
+        ]
+      },
+      fragment: {
+        module: lineShader,
+        entryPoint: 'fsMain',
+        targets: [
+          {
+            format: this.format,
+            blend: {
+              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' }
+            }
+          }
+        ]
+      },
+      primitive: { topology: 'triangle-list' }
+    });
   }
 
   private createBuffers() {
@@ -523,6 +619,9 @@ export class WebGpuMap {
     const tileVertices = new Float32Array([0, 0, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 1, 0, 1]);
     const markerQuad = new Float32Array([
       -0.5, -0.5, 0.5, -0.5, 0.5, 0.5, -0.5, -0.5, 0.5, 0.5, -0.5, 0.5
+    ]);
+    const lineQuad = new Float32Array([
+      -1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1
     ]);
 
     this.tileVertexBuffer = this.createBuffer(
@@ -535,6 +634,11 @@ export class WebGpuMap {
       GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     );
 
+    this.lineVertexBuffer = this.createBuffer(
+      lineQuad,
+      GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    );
+
     this.markerInstanceBuffer = this.device.createBuffer({
       label: 'marker instance buffer',
       size: maxM * 32,
@@ -544,6 +648,12 @@ export class WebGpuMap {
     this.cameraBuffer = this.device.createBuffer({
       label: 'camera uniform buffer',
       size: 32,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+    this.basemapStyleBuffer = this.device.createBuffer({
+      label: 'basemap style uniform buffer',
+      size: BASEMAP_SHADER_PARAM_FLOATS * 4,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
@@ -598,6 +708,31 @@ export class WebGpuMap {
       this.geometryVertexData,
       GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     );
+  }
+
+  private uploadLineSegments() {
+    this.lineInstanceBuffer?.destroy();
+    this.lineInstanceBuffer = null;
+
+    if (
+      this.device == null ||
+      this.lineSegmentCount === 0 ||
+      this.lineInstanceData.byteLength === 0
+    ) {
+      return;
+    }
+
+    this.lineInstanceBuffer = this.createBuffer(
+      this.lineInstanceData,
+      GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
+    );
+  }
+
+  private uploadBasemapStyle() {
+    if (this.device == null || this.basemapStyleBuffer == null) return;
+
+    packBasemapShaderParams(this.basemapStyle, this.basemapStyleUniform);
+    this.device.queue.writeBuffer(this.basemapStyleBuffer, 0, this.basemapStyleUniform);
   }
 
   private createDemoMarkers() {
@@ -1026,6 +1161,7 @@ export class WebGpuMap {
       this.tilePipeline == null ||
       this.cameraBindGroup == null ||
       this.tileVertexBuffer == null ||
+      this.basemapStyleBuffer == null ||
       this.sampler == null ||
       this.tileBindGroupLayout == null
     ) {
@@ -1114,7 +1250,8 @@ export class WebGpuMap {
           entries: [
             { binding: 0, resource: this.sampler },
             { binding: 1, resource: rec.view },
-            { binding: 2, resource: { buffer: tile.uniformBuffer } }
+            { binding: 2, resource: { buffer: tile.uniformBuffer } },
+            { binding: 3, resource: { buffer: this.basemapStyleBuffer } }
           ]
         });
       }
@@ -1146,6 +1283,20 @@ export class WebGpuMap {
 
     }
 
+    if (
+      this.lineSegmentCount > 0 &&
+      this.linePipeline &&
+      this.lineVertexBuffer &&
+      this.lineInstanceBuffer
+    ) {
+
+      pass.setPipeline(this.linePipeline);
+      pass.setVertexBuffer(0, this.lineVertexBuffer);
+      pass.setVertexBuffer(1, this.lineInstanceBuffer);
+      pass.draw(6, this.lineSegmentCount, 0, 0);
+
+    }
+
     if (this.markerCount > 0 && this.markerPipeline && this.markerVertexBuffer && this.markerInstanceBuffer) {
 
       pass.setPipeline(this.markerPipeline);
@@ -1173,7 +1324,8 @@ export class WebGpuMap {
       cacheSize: this.tileCache?.size ?? 0,
       inflightCount: this.inflight.size,
       markerCount: this.markerCount,
-      geometryVertexCount: this.geometryVertexCount
+      geometryVertexCount: this.geometryVertexCount,
+      lineSegmentCount: this.lineSegmentCount
     });
   }
 
@@ -1377,6 +1529,8 @@ export class WebGpuMap {
     this.createBindGroups();
     this.uploadMarkerInstances();
     this.uploadGeometryVertices();
+    this.uploadLineSegments();
+    this.uploadBasemapStyle();
     this.createDemoMarkers();
     
     this.installEvents();
@@ -1443,12 +1597,18 @@ export class WebGpuMap {
     this.markerVertexBuffer?.destroy();
     this.markerInstanceBuffer?.destroy();
     this.geometryVertexBuffer?.destroy();
+    this.lineVertexBuffer?.destroy();
+    this.lineInstanceBuffer?.destroy();
     this.cameraBuffer?.destroy();
+    this.basemapStyleBuffer?.destroy();
     this.tileVertexBuffer = null;
     this.markerVertexBuffer = null;
     this.markerInstanceBuffer = null;
     this.geometryVertexBuffer = null;
+    this.lineVertexBuffer = null;
+    this.lineInstanceBuffer = null;
     this.cameraBuffer = null;
+    this.basemapStyleBuffer = null;
 
     this.device?.destroy();
     this.device = null;
@@ -1457,6 +1617,7 @@ export class WebGpuMap {
     this.tilePipeline = null;
     this.markerPipeline = null;
     this.geometryPipeline = null;
+    this.linePipeline = null;
     this.cameraBindGroup = null;
     this.cameraBindGroupLayout = null;
     this.tileBindGroupLayout = null;

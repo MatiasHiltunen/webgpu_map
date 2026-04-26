@@ -24,6 +24,13 @@ map.setGeoJson(featureCollection, {
   markerColor: [1, 0.25, 0.1, 0.9]
 })
 
+map.setBasemapShaderParams({
+  brightness: -0.04,
+  contrast: 1.15,
+  saturation: 0.65,
+  tintColor: [0.82, 0.92, 1],
+  tintStrength: 0.25
+})
 ```
 
 Check the live demo here: https://matiashiltunen.github.io/webgpu_map/
