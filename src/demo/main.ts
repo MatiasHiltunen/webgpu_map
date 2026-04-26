@@ -34,6 +34,7 @@ const map = new WebGpuMap({
   }
 });
 
+
 void map.init().catch((err: unknown) => {
   showError(err instanceof Error ? err.message : String(err));
 });
