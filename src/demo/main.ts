@@ -197,8 +197,9 @@ function setCollapsible(
   fab: HTMLButtonElement,
   collapsed: boolean
 ) {
-  panel.classList.toggle('hidden', collapsed);
-  fab.classList.toggle('hidden', !collapsed);
+  panel.hidden = collapsed;
+  fab.hidden = !collapsed;
+  panel.setAttribute('aria-hidden', String(collapsed));
   fab.setAttribute('aria-expanded', String(!collapsed));
 }
 

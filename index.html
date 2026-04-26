@@ -26,6 +26,7 @@
 
     #map:active { cursor: grabbing; }
 
+    [hidden],
     .hidden {
       display: none !important;
     }
@@ -250,8 +251,8 @@
     </div>
     <pre id="hud"></pre>
   </section>
-  <button id="hud-fab" class="fab hidden" type="button" aria-controls="hud-panel" aria-expanded="false">Stats</button>
-  <button id="controls-fab" class="fab hidden" type="button" aria-controls="controls" aria-expanded="false">Tools</button>
+  <button id="hud-fab" class="fab" type="button" aria-controls="hud-panel" aria-expanded="false" hidden>Stats</button>
+  <button id="controls-fab" class="fab" type="button" aria-controls="controls" aria-expanded="false" hidden>Tools</button>
   <form id="controls">
     <div class="panel-title">
       <h2>Demo Controls</h2>
