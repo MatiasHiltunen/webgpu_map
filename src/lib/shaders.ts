@@ -1,12 +1,9 @@
 /** @internal Exported for self-tests and reuse; not part of stable public API surface. */
 export const TILE_WGSL = `
 struct Camera {
-  topLeftWorld : vec2<f32>,
-  viewportSize : vec2<f32>,
-  worldSize : f32,
-  dpr : f32,
-  zoom : f32,
-  scale : f32,
+  topLeft01 : vec4<f32>,
+  viewport : vec4<f32>,
+  view : vec4<f32>,
 };
 
 struct TileInfo {
@@ -34,11 +31,10 @@ struct VSOut {
 @vertex
 fn vsMain(@location(0) pos : vec2<f32>, @location(1) uv : vec2<f32>) -> VSOut {
   var out : VSOut;
-  let world = tile.originAndSize.xy + pos * tile.originAndSize.zw;
-  let screen = world - camera.topLeftWorld;
+  let screen = tile.originAndSize.xy + pos * tile.originAndSize.zw;
   let ndc = vec2<f32>(
-    screen.x / camera.viewportSize.x * 2.0 - 1.0,
-    1.0 - screen.y / camera.viewportSize.y * 2.0
+    screen.x / camera.viewport.x * 2.0 - 1.0,
+    1.0 - screen.y / camera.viewport.y * 2.0
   );
   out.position = vec4<f32>(ndc, 0.0, 1.0);
   out.uv = tile.uvOriginAndScale.xy + uv * tile.uvOriginAndScale.zw;
@@ -267,20 +263,36 @@ export const BASEMAP_BLUR_Y_WGSL = blurWgsl('y');
 /** @internal */
 export const MARKER_WGSL = `
 struct Camera {
-  topLeftWorld : vec2<f32>,
-  viewportSize : vec2<f32>,
-  worldSize : f32,
-  dpr : f32,
-  zoom : f32,
-  scale : f32,
+  topLeft01 : vec4<f32>,
+  viewport : vec4<f32>,
+  view : vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera : Camera;
 
-fn wrapWorldX(world : vec2<f32>) -> vec2<f32> {
-  let centerX = camera.topLeftWorld.x + camera.viewportSize.x * 0.5;
-  let shift = round((centerX - world.x) / camera.worldSize) * camera.worldSize;
-  return vec2<f32>(world.x + shift, world.y);
+fn worldSize() -> f32 {
+  return camera.viewport.z;
+}
+
+fn viewportSize() -> vec2<f32> {
+  return camera.viewport.xy;
+}
+
+fn cameraScale() -> f32 {
+  return camera.view.y;
+}
+
+fn worldShiftX(pointX01 : f32) -> f32 {
+  let centerX01 = camera.topLeft01.x + camera.topLeft01.z + viewportSize().x * 0.5 / worldSize();
+  return round(centerX01 - pointX01);
+}
+
+fn screenFromMercator(mercator01Hi : vec2<f32>, mercator01Lo : vec2<f32>, shiftX01 : f32) -> vec2<f32> {
+  let delta01 = vec2<f32>(
+    (mercator01Hi.x - camera.topLeft01.x) + (mercator01Lo.x - camera.topLeft01.z) + shiftX01,
+    (mercator01Hi.y - camera.topLeft01.y) + (mercator01Lo.y - camera.topLeft01.w)
+  );
+  return delta01 * worldSize();
 }
 
 struct VSOut {
@@ -292,16 +304,21 @@ struct VSOut {
 @vertex
 fn vsMain(
   @location(0) localPos : vec2<f32>,
-  @location(1) mercator01 : vec2<f32>,
-  @location(2) sizeCss : f32,
-  @location(3) color : vec4<f32>
+  @location(1) mercator01Hi : vec2<f32>,
+  @location(2) mercator01Lo : vec2<f32>,
+  @location(3) sizeCss : f32,
+  @location(4) color : vec4<f32>
 ) -> VSOut {
   var out : VSOut;
-  let world = wrapWorldX(mercator01 * camera.worldSize) + localPos * sizeCss / camera.scale;
-  let screen = world - camera.topLeftWorld;
+  let pointX01 = mercator01Hi.x + mercator01Lo.x;
+  let screen = screenFromMercator(
+    mercator01Hi,
+    mercator01Lo,
+    worldShiftX(pointX01)
+  ) + localPos * sizeCss / cameraScale();
   let ndc = vec2<f32>(
-    screen.x / camera.viewportSize.x * 2.0 - 1.0,
-    1.0 - screen.y / camera.viewportSize.y * 2.0
+    screen.x / viewportSize().x * 2.0 - 1.0,
+    1.0 - screen.y / viewportSize().y * 2.0
   );
   out.position = vec4<f32>(ndc, 0.0, 1.0);
   out.local = localPos;
@@ -320,20 +337,36 @@ fn fsMain(in : VSOut) -> @location(0) vec4<f32> {
 /** @internal */
 export const GEOMETRY_WGSL = `
 struct Camera {
-  topLeftWorld : vec2<f32>,
-  viewportSize : vec2<f32>,
-  worldSize : f32,
-  dpr : f32,
-  zoom : f32,
-  scale : f32,
+  topLeft01 : vec4<f32>,
+  viewport : vec4<f32>,
+  view : vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera : Camera;
 
-fn wrapWorldX(world : vec2<f32>) -> vec2<f32> {
-  let centerX = camera.topLeftWorld.x + camera.viewportSize.x * 0.5;
-  let shift = round((centerX - world.x) / camera.worldSize) * camera.worldSize;
-  return vec2<f32>(world.x + shift, world.y);
+fn worldSize() -> f32 {
+  return camera.viewport.z;
+}
+
+fn viewportSize() -> vec2<f32> {
+  return camera.viewport.xy;
+}
+
+fn cameraScale() -> f32 {
+  return camera.view.y;
+}
+
+fn worldShiftX(pointX01 : f32) -> f32 {
+  let centerX01 = camera.topLeft01.x + camera.topLeft01.z + viewportSize().x * 0.5 / worldSize();
+  return round(centerX01 - pointX01);
+}
+
+fn screenFromMercator(mercator01Hi : vec2<f32>, mercator01Lo : vec2<f32>, shiftX01 : f32) -> vec2<f32> {
+  let delta01 = vec2<f32>(
+    (mercator01Hi.x - camera.topLeft01.x) + (mercator01Lo.x - camera.topLeft01.z) + shiftX01,
+    (mercator01Hi.y - camera.topLeft01.y) + (mercator01Lo.y - camera.topLeft01.w)
+  );
+  return delta01 * worldSize();
 }
 
 struct VSOut {
@@ -343,16 +376,21 @@ struct VSOut {
 
 @vertex
 fn vsMain(
-  @location(0) mercator01 : vec2<f32>,
-  @location(1) offsetCss : vec2<f32>,
-  @location(2) color : vec4<f32>
+  @location(0) mercator01Hi : vec2<f32>,
+  @location(1) mercator01Lo : vec2<f32>,
+  @location(2) offsetCss : vec2<f32>,
+  @location(3) color : vec4<f32>
 ) -> VSOut {
   var out : VSOut;
-  let world = wrapWorldX(mercator01 * camera.worldSize) + offsetCss / camera.scale;
-  let screen = world - camera.topLeftWorld;
+  let pointX01 = mercator01Hi.x + mercator01Lo.x;
+  let screen = screenFromMercator(
+    mercator01Hi,
+    mercator01Lo,
+    worldShiftX(pointX01)
+  ) + offsetCss / cameraScale();
   let ndc = vec2<f32>(
-    screen.x / camera.viewportSize.x * 2.0 - 1.0,
-    1.0 - screen.y / camera.viewportSize.y * 2.0
+    screen.x / viewportSize().x * 2.0 - 1.0,
+    1.0 - screen.y / viewportSize().y * 2.0
   );
   out.position = vec4<f32>(ndc, 0.0, 1.0);
   out.color = color;
@@ -368,20 +406,40 @@ fn fsMain(in : VSOut) -> @location(0) vec4<f32> {
 /** @internal */
 export const LINE_WGSL = `
 struct Camera {
-  topLeftWorld : vec2<f32>,
-  viewportSize : vec2<f32>,
-  worldSize : f32,
-  dpr : f32,
-  zoom : f32,
-  scale : f32,
+  topLeft01 : vec4<f32>,
+  viewport : vec4<f32>,
+  view : vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> camera : Camera;
 
-fn wrapWorldX(world : vec2<f32>) -> vec2<f32> {
-  let centerX = camera.topLeftWorld.x + camera.viewportSize.x * 0.5;
-  let shift = round((centerX - world.x) / camera.worldSize) * camera.worldSize;
-  return vec2<f32>(world.x + shift, world.y);
+fn worldSize() -> f32 {
+  return camera.viewport.z;
+}
+
+fn viewportSize() -> vec2<f32> {
+  return camera.viewport.xy;
+}
+
+fn devicePixelRatio() -> f32 {
+  return camera.viewport.w;
+}
+
+fn cameraScale() -> f32 {
+  return camera.view.y;
+}
+
+fn worldShiftX(pointX01 : f32) -> f32 {
+  let centerX01 = camera.topLeft01.x + camera.topLeft01.z + viewportSize().x * 0.5 / worldSize();
+  return round(centerX01 - pointX01);
+}
+
+fn screenFromMercator(mercator01Hi : vec2<f32>, mercator01Lo : vec2<f32>, shiftX01 : f32) -> vec2<f32> {
+  let delta01 = vec2<f32>(
+    (mercator01Hi.x - camera.topLeft01.x) + (mercator01Lo.x - camera.topLeft01.z) + shiftX01,
+    (mercator01Hi.y - camera.topLeft01.y) + (mercator01Lo.y - camera.topLeft01.w)
+  );
+  return delta01 * worldSize();
 }
 
 struct VSOut {
@@ -394,33 +452,35 @@ struct VSOut {
 @vertex
 fn vsMain(
   @location(0) quad : vec2<f32>,
-  @location(1) start01 : vec2<f32>,
-  @location(2) end01 : vec2<f32>,
-  @location(3) widthCss : f32,
-  @location(4) color : vec4<f32>
+  @location(1) start01Hi : vec2<f32>,
+  @location(2) start01Lo : vec2<f32>,
+  @location(3) end01Hi : vec2<f32>,
+  @location(4) end01Lo : vec2<f32>,
+  @location(5) widthCss : f32,
+  @location(6) color : vec4<f32>
 ) -> VSOut {
   var out : VSOut;
 
-  let startWorld = wrapWorldX(start01 * camera.worldSize);
-  let endWorld = startWorld + (end01 - start01) * camera.worldSize;
-  let startCss = (startWorld - camera.topLeftWorld) * camera.scale;
-  let endCss = (endWorld - camera.topLeftWorld) * camera.scale;
+  let startX01 = start01Hi.x + start01Lo.x;
+  let shiftX01 = worldShiftX(startX01);
+  let startCss = screenFromMercator(start01Hi, start01Lo, shiftX01) * cameraScale();
+  let endCss = screenFromMercator(end01Hi, end01Lo, shiftX01) * cameraScale();
   let delta = endCss - startCss;
   let len = length(delta);
   let safeLen = max(len, 0.0001);
   let dir = delta / safeLen;
   let normal = vec2<f32>(-dir.y, dir.x);
   let halfLen = len * 0.5;
-  let halfWidth = max(widthCss, 1.0 / camera.dpr) * 0.5;
-  let aa = max(0.75 / camera.dpr, 0.35);
+  let halfWidth = max(widthCss, 1.0 / devicePixelRatio()) * 0.5;
+  let aa = max(0.75 / devicePixelRatio(), 0.35);
   let extent = halfWidth + aa * 2.0;
   let center = (startCss + endCss) * 0.5;
   let lineLocal = vec2<f32>(quad.x * (halfLen + extent), quad.y * extent);
   let screenCss = center + dir * lineLocal.x + normal * lineLocal.y;
-  let screen = screenCss / camera.scale;
+  let screen = screenCss / cameraScale();
   let ndc = vec2<f32>(
-    screen.x / camera.viewportSize.x * 2.0 - 1.0,
-    1.0 - screen.y / camera.viewportSize.y * 2.0
+    screen.x / viewportSize().x * 2.0 - 1.0,
+    1.0 - screen.y / viewportSize().y * 2.0
   );
 
   out.position = vec4<f32>(ndc, 0.0, 1.0);
@@ -434,7 +494,7 @@ fn vsMain(
 fn fsMain(in : VSOut) -> @location(0) vec4<f32> {
   let closestX = clamp(in.lineLocal.x, -in.halfLenAndWidth.x, in.halfLenAndWidth.x);
   let dist = length(in.lineLocal - vec2<f32>(closestX, 0.0)) - in.halfLenAndWidth.y;
-  let aa = max(0.75 / camera.dpr, 0.35);
+  let aa = max(0.75 / devicePixelRatio(), 0.35);
   let alpha = (1.0 - smoothstep(-aa, aa, dist)) * in.color.a;
 
   return vec4<f32>(in.color.rgb * alpha, alpha);

@@ -178,6 +178,16 @@ type PinchState = {
 
 type PointerSample = { x: number; y: number };
 
+type TileViewState = {
+  tileZ: number;
+  tileWorldSize: number;
+  scale: number;
+  virtualWidth: number;
+  virtualHeight: number;
+  topLeftX: number;
+  topLeftY: number;
+};
+
 
 // WebGPU + raster-tiles slippy map (MVP): pan, pinch zoom, wheel, kinetic scroll.
 // Dispose with {@link WebGpuMap.destroy} when the canvas is torn down.
@@ -254,8 +264,10 @@ export class WebGpuMap {
   private drag: DragState | null = null;
   private pinch: PinchState | null = null;
   private kinetic = { raf: 0, vx: 0, vy: 0, lastTime: 0 };
+  private viewportTopLeftX = 0;
+  private viewportTopLeftY = 0;
   
-  private readonly cameraUniform = new Float32Array(8);
+  private readonly cameraUniform = new Float32Array(12);
   private readonly tileUniform = new Float32Array(8);
   private readonly basemapStyleUniform = new Float32Array(BASEMAP_SHADER_PARAM_FLOATS);
   private readonly basemapEffectsUniform = new Float32Array(BASEMAP_EFFECT_PARAM_FLOATS);
@@ -410,6 +422,25 @@ export class WebGpuMap {
 
   private wz(z: number) {
     return worldSize(z, this.opts.tileSize);
+  }
+
+  private currentTileView(): TileViewState {
+    const tileZ = this.tileZ();
+    const renderSize = this.wz(this.camera.zoom);
+    const tileWorldSize = this.wz(tileZ);
+    const scale = renderSize / tileWorldSize;
+    const virtualWidth = this.widthCss / scale;
+    const virtualHeight = this.heightCss / scale;
+
+    return {
+      tileZ,
+      tileWorldSize,
+      scale,
+      virtualWidth,
+      virtualHeight,
+      topLeftX: this.camera.centerX01 * tileWorldSize - virtualWidth / 2,
+      topLeftY: this.camera.centerY01 * tileWorldSize - virtualHeight / 2
+    };
   }
 
   private tileUrl(z: number, x: number, y: number) {
@@ -645,12 +676,13 @@ export class WebGpuMap {
         buffers: [
           { arrayStride: 8, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x2' }] },
           {
-            arrayStride: 32,
+            arrayStride: MARKER_INSTANCE_FLOATS * 4,
             stepMode: 'instance',
             attributes: [
               { shaderLocation: 1, offset: 0, format: 'float32x2' },
-              { shaderLocation: 2, offset: 8, format: 'float32' },
-              { shaderLocation: 3, offset: 16, format: 'float32x4' }
+              { shaderLocation: 2, offset: 8, format: 'float32x2' },
+              { shaderLocation: 3, offset: 16, format: 'float32' },
+              { shaderLocation: 4, offset: 24, format: 'float32x4' }
             ]
           }
         ]
@@ -685,7 +717,8 @@ export class WebGpuMap {
             attributes: [
               { shaderLocation: 0, offset: 0, format: 'float32x2' },
               { shaderLocation: 1, offset: 8, format: 'float32x2' },
-              { shaderLocation: 2, offset: 16, format: 'float32x4' }
+              { shaderLocation: 2, offset: 16, format: 'float32x2' },
+              { shaderLocation: 3, offset: 24, format: 'float32x4' }
             ]
           }
         ]
@@ -725,8 +758,10 @@ export class WebGpuMap {
             attributes: [
               { shaderLocation: 1, offset: 0, format: 'float32x2' },
               { shaderLocation: 2, offset: 8, format: 'float32x2' },
-              { shaderLocation: 3, offset: 16, format: 'float32' },
-              { shaderLocation: 4, offset: 24, format: 'float32x4' }
+              { shaderLocation: 3, offset: 16, format: 'float32x2' },
+              { shaderLocation: 4, offset: 24, format: 'float32x2' },
+              { shaderLocation: 5, offset: 32, format: 'float32' },
+              { shaderLocation: 6, offset: 40, format: 'float32x4' }
             ]
           }
         ]
@@ -802,13 +837,13 @@ export class WebGpuMap {
 
     this.markerInstanceBuffer = this.device.createBuffer({
       label: 'marker instance buffer',
-      size: maxM * 32,
+      size: maxM * MARKER_INSTANCE_FLOATS * 4,
       usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST
     });
 
     this.cameraBuffer = this.device.createBuffer({
       label: 'camera uniform buffer',
-      size: 32,
+      size: this.cameraUniform.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
     });
 
@@ -1020,14 +1055,21 @@ export class WebGpuMap {
       const lat = centerLat + (Math.random() - 0.5) * 10;
       const lng = centerLng + (Math.random() - 0.5) * 18;
       const o = i * MARKER_INSTANCE_FLOATS;
-      data[o + 0] = lngToX01(lng);
-      data[o + 1] = latToY01(lat);
-      data[o + 2] = 4 + Math.random() * 8;
-      data[o + 3] = 0;
-      data[o + 4] = 0.2 + Math.random() * 0.8;
-      data[o + 5] = 0.4 + Math.random() * 0.6;
-      data[o + 6] = 0.9;
-      data[o + 7] = 0.75;
+      const x = lngToX01(lng);
+      const y = latToY01(lat);
+      const xHi = Math.fround(x);
+      const yHi = Math.fround(y);
+
+      data[o + 0] = xHi;
+      data[o + 1] = yHi;
+      data[o + 2] = x - xHi;
+      data[o + 3] = y - yHi;
+      data[o + 4] = 4 + Math.random() * 8;
+      data[o + 5] = 0;
+      data[o + 6] = 0.2 + Math.random() * 0.8;
+      data[o + 7] = 0.4 + Math.random() * 0.6;
+      data[o + 8] = 0.9;
+      data[o + 9] = 0.75;
     }
 
     this.markerInstanceData = data;
@@ -1214,25 +1256,27 @@ export class WebGpuMap {
   private updateCameraUniform() {
     if (this.device == null || this.cameraBuffer == null) return;
 
-    const tileZ = this.tileZ();
-    const renderSize = this.wz(this.camera.zoom);
-    const tileWorldSize = this.wz(tileZ);
-    const scale = renderSize / tileWorldSize;
-    
-    const cx = this.camera.centerX01 * tileWorldSize;
-    const cy = this.camera.centerY01 * tileWorldSize;
-    
-    const virtualWidth = this.widthCss / scale;
-    const virtualHeight = this.heightCss / scale;
+    const view = this.currentTileView();
+    const topLeftX01 = view.topLeftX / view.tileWorldSize;
+    const topLeftY01 = view.topLeftY / view.tileWorldSize;
+    const topLeftXHi = Math.fround(topLeftX01);
+    const topLeftYHi = Math.fround(topLeftY01);
 
-    this.cameraUniform[0] = cx - virtualWidth / 2;
-    this.cameraUniform[1] = cy - virtualHeight / 2;
-    this.cameraUniform[2] = virtualWidth;
-    this.cameraUniform[3] = virtualHeight;
-    this.cameraUniform[4] = tileWorldSize;
-    this.cameraUniform[5] = this.dpr;
-    this.cameraUniform[6] = this.camera.zoom;
-    this.cameraUniform[7] = scale;
+    this.viewportTopLeftX = view.topLeftX;
+    this.viewportTopLeftY = view.topLeftY;
+
+    this.cameraUniform[0] = topLeftXHi;
+    this.cameraUniform[1] = topLeftYHi;
+    this.cameraUniform[2] = topLeftX01 - topLeftXHi;
+    this.cameraUniform[3] = topLeftY01 - topLeftYHi;
+    this.cameraUniform[4] = view.virtualWidth;
+    this.cameraUniform[5] = view.virtualHeight;
+    this.cameraUniform[6] = view.tileWorldSize;
+    this.cameraUniform[7] = this.dpr;
+    this.cameraUniform[8] = this.camera.zoom;
+    this.cameraUniform[9] = view.scale;
+    this.cameraUniform[10] = 0;
+    this.cameraUniform[11] = 0;
 
     this.device.queue.writeBuffer(this.cameraBuffer, 0, this.cameraUniform);
   }
@@ -1279,28 +1323,18 @@ export class WebGpuMap {
   private updateVisibleTiles() {
     if (this.tileCache == null) return;
 
-    const minZ = this.opts.minZoom;
-    const maxZ = this.opts.maxZoom;
-    
     const margin = this.opts.prefetchMargin;
     
     const tileSize = this.opts.tileSize;
-    const tileZ = integerTileZoom(this.camera.zoom, minZ, maxZ);
-    
-    const renderSize = this.wz(this.camera.zoom);
-    const tileWorldSize = this.wz(tileZ);
-    
-    const scale = renderSize / tileWorldSize;
-    const virtualWidth = this.widthCss / scale;
-    const virtualHeight = this.heightCss / scale;
-    
-    const topLeftX = this.camera.centerX01 * tileWorldSize - virtualWidth / 2;
-    const topLeftY = this.camera.centerY01 * tileWorldSize - virtualHeight / 2;
+    const view = this.currentTileView();
+    const tileZ = view.tileZ;
+    const topLeftX = view.topLeftX;
+    const topLeftY = view.topLeftY;
 
     const minTileX = Math.floor(topLeftX / tileSize) - margin;
-    const maxTileX = Math.floor((topLeftX + virtualWidth - 1) / tileSize) + margin;
+    const maxTileX = Math.floor((topLeftX + view.virtualWidth - 1) / tileSize) + margin;
     const minTileY = Math.floor(topLeftY / tileSize) - margin;
-    const maxTileY = Math.floor((topLeftY + virtualHeight - 1) / tileSize) + margin;
+    const maxTileY = Math.floor((topLeftY + view.virtualHeight - 1) / tileSize) + margin;
 
     const tileCount = 1 << tileZ;
     
@@ -1550,8 +1584,8 @@ export class WebGpuMap {
 
       const ts = this.opts.tileSize;
       
-      this.tileUniform[0] = tile.originX;
-      this.tileUniform[1] = tile.originY;
+      this.tileUniform[0] = drawTile.originX - this.viewportTopLeftX;
+      this.tileUniform[1] = drawTile.originY - this.viewportTopLeftY;
       this.tileUniform[2] = ts;
       this.tileUniform[3] = ts;
       this.tileUniform[4] = drawTile.u0;
@@ -1706,7 +1740,11 @@ export class WebGpuMap {
   private handlePointerDown(event: PointerEvent) {
     
     this.stopKinetic();
-    this.canvas.setPointerCapture(event.pointerId);
+    try {
+      this.canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // Headless/browser automation can synthesize pointer input without an active capture target.
+    }
     this.activePointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
 
     if (this.activePointers.size >= 2) {

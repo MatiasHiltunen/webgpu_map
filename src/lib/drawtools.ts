@@ -71,9 +71,9 @@ export type GeoJsonFeatureCollection = {
 
 export type GeoJson = GeoJsonGeometry | GeoJsonFeature | GeoJsonFeatureCollection;
 
-export const DRAW_VERTEX_FLOATS = 8;
-export const LINE_INSTANCE_FLOATS = 10;
-export const MARKER_INSTANCE_FLOATS = 8;
+export const DRAW_VERTEX_FLOATS = 10;
+export const LINE_INSTANCE_FLOATS = 14;
+export const MARKER_INSTANCE_FLOATS = 10;
 
 const DEFAULT_FILL: DrawColor = [0.1, 0.55, 1, 0.18];
 const DEFAULT_STROKE: DrawColor = [0.05, 0.58, 1, 0.92];
@@ -142,15 +142,19 @@ export function buildMarkerInstances(
     const color = rgba(resolveColor(item.color, style.markerColor), DEFAULT_MARKER);
     const size = Math.max(0, item.size ?? style.markerSize ?? DEFAULT_MARKER_SIZE);
     const o = i * MARKER_INSTANCE_FLOATS;
+    const xHi = Math.fround(p.x);
+    const yHi = Math.fround(p.y);
 
-    out[o + 0] = p.x;
-    out[o + 1] = p.y;
-    out[o + 2] = size;
-    out[o + 3] = 0;
-    out[o + 4] = color[0];
-    out[o + 5] = color[1];
-    out[o + 6] = color[2];
-    out[o + 7] = color[3];
+    out[o + 0] = xHi;
+    out[o + 1] = yHi;
+    out[o + 2] = p.x - xHi;
+    out[o + 3] = p.y - yHi;
+    out[o + 4] = size;
+    out[o + 5] = 0;
+    out[o + 6] = color[0];
+    out[o + 7] = color[1];
+    out[o + 8] = color[2];
+    out[o + 9] = color[3];
   }
 
   return out;
@@ -313,10 +317,14 @@ function appendSegmentInstance(
   if (Math.hypot(b.x - a.x, b.y - a.y) <= EPSILON) return;
 
   out.push(
-    a.x,
-    a.y,
-    b.x,
-    b.y,
+    Math.fround(a.x),
+    Math.fround(a.y),
+    a.x - Math.fround(a.x),
+    a.y - Math.fround(a.y),
+    Math.fround(b.x),
+    Math.fround(b.y),
+    b.x - Math.fround(b.x),
+    b.y - Math.fround(b.y),
     width,
     0,
     color[0],
@@ -341,9 +349,14 @@ function appendPolygonFill(
 }
 
 function pushVertex(out: number[], point: MercatorPoint, offsetX: number, offsetY: number, color: Rgba) {
+  const xHi = Math.fround(point.x);
+  const yHi = Math.fround(point.y);
+
   out.push(
-    point.x,
-    point.y,
+    xHi,
+    yHi,
+    point.x - xHi,
+    point.y - yHi,
     offsetX,
     offsetY,
     color[0],
