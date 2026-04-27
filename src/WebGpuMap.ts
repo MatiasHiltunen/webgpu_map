@@ -412,6 +412,40 @@ export class WebGpuMap {
     this.requestFrame();
   }
 
+  /**
+   * Switch the raster basemap source at runtime. Aborts in-flight tile
+   * requests, drops cached tile textures, and refetches the visible viewport.
+   * Tile keys (`z/x/y`) are reused across providers, so the cache MUST be
+   * invalidated to avoid mixing imagery from different sources.
+   */
+  setTileUrlTemplate(template: string) {
+    const next = template.trim();
+
+    if (next.length === 0) {
+      throw new Error('WebGpuMap: tileUrlTemplate must be a non-empty string');
+    }
+
+    if (next === this.opts.tileUrlTemplate) return;
+
+    this.opts.tileUrlTemplate = next;
+
+    for (const [, rec] of this.inflight) {
+      rec.abort.abort();
+    }
+    this.inflight.clear();
+
+    for (const tile of this.visibleTiles) {
+      if (tile.uniformBuffer) tile.uniformBuffer.destroy();
+    }
+    this.visibleTiles = [];
+    this.visibleSignature = '';
+
+    this.tileCache?.clear();
+
+    this.updateVisibleTiles();
+    this.requestFrame();
+  }
+
   private tileZ(): number {
     return integerTileZoom(
       this.camera.zoom,
@@ -1405,14 +1439,16 @@ export class WebGpuMap {
     fetch(this.tileUrl(tile.z, tile.x, tile.y), reqInit)
       .then((response) => {
         if (!response.ok) throw new Error('HTTP ' + String(response.status));
-        return response.bytes();
+        //return response.bytes();
+      
+      return response.blob();
       })
-      .then((bytes) => {
+      .then((blob) => {
 
 
-        return createImageBitmap(new Blob([bytes], {type: "image/png"}))
+        //return createImageBitmap(new Blob([bytes], {type: "image/png"}))
 
-
+      return createImageBitmap(blob);
       })
       .then((bitmap) => {
         if (this.destroyed || !this.inflight.has(tile.key)) {

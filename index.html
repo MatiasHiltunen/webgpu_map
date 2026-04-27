@@ -142,7 +142,7 @@
       margin: 8px 0;
     }
 
-    #controls label:first-of-type {
+    #controls label:has(select) {
       grid-template-columns: 86px minmax(0, 1fr);
     }
 
@@ -230,7 +230,7 @@
       font: 11px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     }
 
-    #osm-attribution {
+    #basemap-attribution {
       position: fixed;
       z-index: 1;
       right: 10px;
@@ -245,7 +245,7 @@
       pointer-events: none;
     }
 
-    #osm-attribution a {
+    #basemap-attribution a {
       color: #9cf;
       text-decoration: underline;
       pointer-events: auto;
@@ -268,6 +268,10 @@
       <h2>Demo Controls</h2>
       <button id="controls-collapse" class="collapse-button" type="button" aria-label="Collapse controls">−</button>
     </div>
+    <label>
+      Basemap
+      <select id="basemap-source"></select>
+    </label>
     <label>
       Feature
       <select id="feature-demo"></select>
@@ -378,11 +382,7 @@
     </section>
   </form>
   <div id="error"></div>
-  <footer id="osm-attribution" aria-label="Map data attribution">
-    Map: ©
-    <a href="https://www.openstreetmap.org/copyright" rel="license noreferrer" target="_blank" title="OpenStreetMap legal">OpenStreetMap</a>
-    contributors
-  </footer>
+  <footer id="basemap-attribution" aria-label="Map data attribution"></footer>
 
   <script type="module" src="./dist/demo/main.js"></script>
 </body>

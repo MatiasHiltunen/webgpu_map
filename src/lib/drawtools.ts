@@ -132,7 +132,7 @@ export function buildMarkerInstances(
   markers: readonly DrawMarker[],
   style: DrawStyle = {},
   limit = markers.length
-): Float32Array {
+): Float32Array<ArrayBuffer> {
   const count = Math.min(markers.length, Math.max(0, Math.floor(limit)));
   const out = new Float32Array(count * MARKER_INSTANCE_FLOATS);
 
@@ -163,7 +163,7 @@ export function buildMarkerInstances(
 export function buildGeometryVertices(
   geometries: readonly DrawGeometry[],
   style: DrawStyle = {}
-): Float32Array {
+): Float32Array<ArrayBuffer> {
   const vertices: number[] = [];
 
   for (const geometry of geometries) {
@@ -182,7 +182,7 @@ export function buildGeometryVertices(
 export function buildLineSegmentInstances(
   geometries: readonly DrawGeometry[],
   style: DrawStyle = {}
-): Float32Array {
+): Float32Array<ArrayBuffer> {
   const instances: number[] = [];
 
   for (const geometry of geometries) {

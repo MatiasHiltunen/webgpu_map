@@ -15,6 +15,8 @@ const hudPanel = document.getElementById('hud-panel');
 const errorBox = document.getElementById('error');
 const controls = document.getElementById('controls');
 const featureSelect = document.getElementById('feature-demo');
+const basemapSelect = document.getElementById('basemap-source');
+const basemapAttribution = document.getElementById('basemap-attribution');
 
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('Expected <canvas id="map"> in the document');
@@ -33,11 +35,21 @@ if (!(featureSelect instanceof HTMLSelectElement)) {
   throw new Error('Expected #feature-demo <select> in the document');
 }
 
+if (!(basemapSelect instanceof HTMLSelectElement)) {
+  throw new Error('Expected #basemap-source <select> in the document');
+}
+
+if (!(basemapAttribution instanceof HTMLElement)) {
+  throw new Error('Expected #basemap-attribution element in the document');
+}
+
 const hudEl: HTMLElement = hud;
 const hudPanelEl: HTMLElement = hudPanel;
 const errBox: HTMLElement = errorBox;
 const controlsEl: HTMLFormElement = controls;
 const featureSelectEl: HTMLSelectElement = featureSelect;
+const basemapSelectEl: HTMLSelectElement = basemapSelect;
+const basemapAttributionEl: HTMLElement = basemapAttribution;
 const hudFab = button('hud-fab');
 const hudCollapse = button('hud-collapse');
 const controlsFab = button('controls-fab');
@@ -347,6 +359,43 @@ function isGeoJson(value: unknown): value is GeoJson {
   return isGeoJsonGeometry(value);
 }
 
+type BasemapPreset = {
+  readonly id: string;
+  readonly name: string;
+  readonly tileUrlTemplate: string;
+  readonly attributionHtml: string;
+};
+
+// Keyless public raster sources. Each provider has its own usage policy and
+// required attribution; do not remove the visible credits below when reusing.
+const basemapPresets: readonly BasemapPreset[] = [
+  {
+    id: 'osm-standard',
+    name: 'OpenStreetMap',
+    tileUrlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    attributionHtml:
+      'Map data &copy; <a href="https://www.openstreetmap.org/copyright" rel="license noreferrer" target="_blank">OpenStreetMap</a> contributors'
+  },
+  {
+    id: 'opentopomap',
+    name: 'Terrain (OpenTopoMap)',
+    tileUrlTemplate: 'https://a.tile.opentopomap.org/{z}/{x}/{y}.png',
+    attributionHtml:
+      'Map data &copy; <a href="https://www.openstreetmap.org/copyright" rel="license noreferrer" target="_blank">OpenStreetMap</a> contributors, SRTM &middot; ' +
+      'Style: &copy; <a href="https://opentopomap.org/" rel="noreferrer" target="_blank">OpenTopoMap</a> ' +
+      '(<a href="https://creativecommons.org/licenses/by-sa/3.0/" rel="license noreferrer" target="_blank">CC-BY-SA</a>)'
+  },
+  {
+    id: 'esri-world-imagery',
+    name: 'Satellite (Esri World Imagery)',
+    tileUrlTemplate:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    attributionHtml:
+      'Imagery &copy; <a href="https://www.esri.com/" rel="noreferrer" target="_blank">Esri</a> &mdash; ' +
+      'Source: Esri, Maxar, Earthstar Geographics, CNES/Airbus DS, USDA, USGS, AeroGRID, IGN, and the GIS User Community'
+  }
+];
+
 const customGeoJsonExample = {
   type: 'FeatureCollection',
   features: [
@@ -542,10 +591,13 @@ const demoCases: readonly DemoCase[] = [
   }
 ];
 
+const initialBasemap = basemapPresets[0]!;
+
 const map = new WebGpuMap({
   canvas,
   initialZoom: 11.1,
   initialCenter: { lat: 60.178, lng: 24.94 },
+  tileUrlTemplate: initialBasemap.tileUrlTemplate,
   onStats(s) {
     hudEl.textContent = [
       'zoom: ' + s.zoom.toFixed(2) + ' / tiles z' + s.tileZ + ' x' + s.scaleToTileZ.toFixed(2),
@@ -599,6 +651,27 @@ for (const [index, demo] of demoCases.entries()) {
   option.textContent = demo.name;
   featureSelectEl.append(option);
 }
+
+function applyBasemapPreset(preset: BasemapPreset) {
+  map.setTileUrlTemplate(preset.tileUrlTemplate);
+  basemapAttributionEl.innerHTML = preset.attributionHtml;
+}
+
+for (const [index, preset] of basemapPresets.entries()) {
+  const option = document.createElement('option');
+
+  option.value = String(index);
+  option.textContent = preset.name;
+  basemapSelectEl.append(option);
+}
+
+basemapSelectEl.selectedIndex = 0;
+basemapAttributionEl.innerHTML = initialBasemap.attributionHtml;
+
+basemapSelectEl.addEventListener('change', () => {
+  const preset = basemapPresets[basemapSelectEl.selectedIndex] ?? basemapPresets[0]!;
+  applyBasemapPreset(preset);
+});
 
 controlsEl.addEventListener('submit', (event) => {
   event.preventDefault();
