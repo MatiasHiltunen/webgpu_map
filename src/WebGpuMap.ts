@@ -14,12 +14,13 @@ import { createLruStore, type LruStore } from './lib/lru.js';
 import {
   BASEMAP_SHADER_PARAM_FLOATS,
   DEFAULT_BASEMAP_SHADER_PARAMS,
+  isBasemapShaderStyleActive,
   packBasemapShaderParams,
   resolveBasemapShaderParams,
   type BasemapShaderParams,
   type ResolvedBasemapShaderParams
 } from './lib/basemapStyle.js';
-import { TILE_WGSL } from './lib/shaders/tile.js';
+import { TILE_BASIC_WGSL, TILE_WGSL } from './lib/shaders/tile.js';
 // import { runMapLibSelfTests } from './lib/selfTest.js';
 import type { FallbackTile } from './lib/geo.js';
 
@@ -168,6 +169,7 @@ export class WebGpuMap {
 
   private cameraBindGroupLayout: GPUBindGroupLayout | null = null;
   private tileBindGroupLayout: GPUBindGroupLayout | null = null;
+  private tileBasicPipeline: GPURenderPipeline | null = null;
   private tilePipeline: GPURenderPipeline | null = null;
   private tileVertexBuffer: GPUBuffer | null = null;
   private cameraBuffer: GPUBuffer | null = null;
@@ -441,14 +443,32 @@ export class WebGpuMap {
       label: 'tile shader',
       code: TILE_WGSL
     });
+    const tileBasicShader = this.device.createShaderModule({
+      label: 'tile basic shader',
+      code: TILE_BASIC_WGSL
+    });
 
-    this.tilePipeline = this.device.createRenderPipeline({
-      label: 'tile pipeline',
+    this.tileBasicPipeline = this.createTilePipeline('tile basic pipeline', tileBasicShader);
+    this.tilePipeline = this.createTilePipeline('tile pipeline', tileShader);
+  }
+
+  private createTilePipeline(label: string, module: GPUShaderModule) {
+    if (
+      this.device == null ||
+      this.format == null ||
+      this.cameraBindGroupLayout == null ||
+      this.tileBindGroupLayout == null
+    ) {
+      throw new Error('WebGpuMap: not ready for tile pipeline');
+    }
+
+    return this.device.createRenderPipeline({
+      label,
       layout: this.device.createPipelineLayout({
         bindGroupLayouts: [this.cameraBindGroupLayout, this.tileBindGroupLayout]
       }),
       vertex: {
-        module: tileShader,
+        module,
         entryPoint: 'vsMain',
         buffers: [
           {
@@ -461,7 +481,7 @@ export class WebGpuMap {
         ]
       },
       fragment: {
-        module: tileShader,
+        module,
         entryPoint: 'fsMain',
         targets: [{ format: this.format }]
       },
@@ -909,6 +929,7 @@ export class WebGpuMap {
       this.device == null ||
       this.context == null ||
       this.format == null ||
+      this.tileBasicPipeline == null ||
       this.tilePipeline == null ||
       this.cameraBindGroup == null ||
       this.tileVertexBuffer == null ||
@@ -939,7 +960,7 @@ export class WebGpuMap {
     pass.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
     pass.setBindGroup(0, this.cameraBindGroup);
 
-    pass.setPipeline(this.tilePipeline);
+    pass.setPipeline(isBasemapShaderStyleActive(this.basemapStyle) ? this.tilePipeline : this.tileBasicPipeline);
     pass.setVertexBuffer(0, this.tileVertexBuffer);
     
     let fallbackDraws = 0;
@@ -1324,6 +1345,7 @@ export class WebGpuMap {
     this.device = null;
     this.adapter = null;
     this.format = null;
+    this.tileBasicPipeline = null;
     this.tilePipeline = null;
     this.cameraBindGroup = null;
     this.cameraBindGroupLayout = null;

@@ -1,4 +1,4 @@
-export { TILE_WGSL } from './shaders/tile.js';
+export { TILE_BASIC_WGSL, TILE_WGSL } from './shaders/tile.js';
 export {
   BASEMAP_BLUR_X_WGSL,
   BASEMAP_BLUR_Y_WGSL,

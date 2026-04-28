@@ -133,10 +133,23 @@ export function packBasemapShaderParams(
   out[7] = params.tintStrength;
   out[8] = params.hueRotate;
   out[9] = params.invert;
-  out[10] = 0;
-  out[11] = 0;
+  out[10] = Math.cos(params.hueRotate);
+  out[11] = Math.sin(params.hueRotate);
 
   return out;
+}
+
+export function isBasemapShaderStyleActive(params: ResolvedBasemapShaderParams): boolean {
+  return params.brightness !== 0 ||
+    params.contrast !== 1 ||
+    params.saturation !== 1 ||
+    params.gamma !== 1 ||
+    params.hueRotate !== 0 ||
+    params.invert !== 0 ||
+    params.tintStrength !== 0 ||
+    params.tintColor[0] !== 1 ||
+    params.tintColor[1] !== 1 ||
+    params.tintColor[2] !== 1;
 }
 
 export function resolveBasemapEffectsParams(
@@ -198,6 +211,14 @@ export function packBasemapEffectsParams(
   out[19] = 0;
 
   return out;
+}
+
+export function isBasemapBloomActive(params: ResolvedBasemapEffectsParams): boolean {
+  return params.bloomIntensity > 0 && params.bloomRadius > 0;
+}
+
+export function isBasemapEffectsActive(params: ResolvedBasemapEffectsParams): boolean {
+  return params.maskPreview || params.heightStrength > 0 || isBasemapBloomActive(params);
 }
 
 function normalizeLight(v: readonly [number, number, number]): readonly [number, number, number] {

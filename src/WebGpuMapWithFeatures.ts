@@ -16,6 +16,9 @@ import {
   BASEMAP_SHADER_PARAM_FLOATS,
   DEFAULT_BASEMAP_EFFECTS_PARAMS,
   DEFAULT_BASEMAP_SHADER_PARAMS,
+  isBasemapBloomActive,
+  isBasemapEffectsActive,
+  isBasemapShaderStyleActive,
   packBasemapEffectsParams,
   packBasemapShaderParams,
   resolveBasemapEffectsParams,
@@ -40,6 +43,7 @@ import {
 } from './lib/drawtools.js';
 import {
   TILE_WGSL,
+  TILE_BASIC_WGSL,
   MARKER_WGSL,
   GEOMETRY_WGSL,
   LINE_WGSL,
@@ -205,6 +209,7 @@ export class WebGpuMap {
   private tileBindGroupLayout: GPUBindGroupLayout | null = null;
   private basemapEffectsBindGroupLayout: GPUBindGroupLayout | null = null;
   private basemapCompositeBindGroupLayout: GPUBindGroupLayout | null = null;
+  private tileBasicPipeline: GPURenderPipeline | null = null;
   private tilePipeline: GPURenderPipeline | null = null;
   private basemapMaskPipeline: GPURenderPipeline | null = null;
   private basemapBlurXPipeline: GPURenderPipeline | null = null;
@@ -602,6 +607,10 @@ export class WebGpuMap {
       label: 'tile shader',
       code: TILE_WGSL
     });
+    const tileBasicShader = this.device.createShaderModule({
+      label: 'tile basic shader',
+      code: TILE_BASIC_WGSL
+    });
 
     const markerShader = this.device.createShaderModule({
       label: 'marker shader',
@@ -638,31 +647,8 @@ export class WebGpuMap {
       code: BASEMAP_BLUR_Y_WGSL
     });
 
-    this.tilePipeline = this.device.createRenderPipeline({
-      label: 'tile pipeline',
-      layout: this.device.createPipelineLayout({
-        bindGroupLayouts: [this.cameraBindGroupLayout, this.tileBindGroupLayout]
-      }),
-      vertex: {
-        module: tileShader,
-        entryPoint: 'vsMain',
-        buffers: [
-          {
-            arrayStride: 16,
-            attributes: [
-              { shaderLocation: 0, offset: 0, format: 'float32x2' },
-              { shaderLocation: 1, offset: 8, format: 'float32x2' }
-            ]
-          }
-        ]
-      },
-      fragment: {
-        module: tileShader,
-        entryPoint: 'fsMain',
-        targets: [{ format: this.format }]
-      },
-      primitive: { topology: 'triangle-list' }
-    });
+    this.tileBasicPipeline = this.createTilePipeline('tile basic pipeline', tileBasicShader);
+    this.tilePipeline = this.createTilePipeline('tile pipeline', tileShader);
 
     this.basemapCompositePipeline = this.device.createRenderPipeline({
       label: 'basemap composite pipeline',
@@ -812,6 +798,43 @@ export class WebGpuMap {
             }
           }
         ]
+      },
+      primitive: { topology: 'triangle-list' }
+    });
+  }
+
+  private createTilePipeline(label: string, module: GPUShaderModule) {
+    if (
+      this.device == null ||
+      this.format == null ||
+      this.cameraBindGroupLayout == null ||
+      this.tileBindGroupLayout == null
+    ) {
+      throw new Error('WebGpuMap: not ready for tile pipeline');
+    }
+
+    return this.device.createRenderPipeline({
+      label,
+      layout: this.device.createPipelineLayout({
+        bindGroupLayouts: [this.cameraBindGroupLayout, this.tileBindGroupLayout]
+      }),
+      vertex: {
+        module,
+        entryPoint: 'vsMain',
+        buffers: [
+          {
+            arrayStride: 16,
+            attributes: [
+              { shaderLocation: 0, offset: 0, format: 'float32x2' },
+              { shaderLocation: 1, offset: 8, format: 'float32x2' }
+            ]
+          }
+        ]
+      },
+      fragment: {
+        module,
+        entryPoint: 'fsMain',
+        targets: [{ format: this.format }]
       },
       primitive: { topology: 'triangle-list' }
     });
@@ -1496,15 +1519,15 @@ export class WebGpuMap {
     if (!this.needsFrame) return;
     this.needsFrame = false;
 
+    const effectsActive = isBasemapEffectsActive(this.basemapEffects);
+    const bloomActive = isBasemapBloomActive(this.basemapEffects);
+
     if (
       this.device == null ||
       this.context == null ||
       this.format == null ||
+      this.tileBasicPipeline == null ||
       this.tilePipeline == null ||
-      this.basemapMaskPipeline == null ||
-      this.basemapBlurXPipeline == null ||
-      this.basemapBlurYPipeline == null ||
-      this.basemapCompositePipeline == null ||
       this.cameraBindGroup == null ||
       this.tileVertexBuffer == null ||
       this.basemapStyleBuffer == null ||
@@ -1516,20 +1539,35 @@ export class WebGpuMap {
     }
 
     this.resize();
-    this.ensureBasemapTarget();
     this.updateCameraUniform();
 
-    if (
-      this.basemapTextureView == null ||
-      this.bloomMaskTextureView == null ||
-      this.bloomPingTextureView == null ||
-      this.bloomTextureView == null ||
-      this.basemapMaskBindGroup == null ||
-      this.bloomBlurXBindGroup == null ||
-      this.bloomBlurYBindGroup == null ||
-      this.basemapCompositeBindGroup == null
-    ) {
-      return;
+    const view = this.context.getCurrentTexture().createView();
+
+    if (effectsActive) {
+      if (
+        this.basemapMaskPipeline == null ||
+        this.basemapBlurXPipeline == null ||
+        this.basemapBlurYPipeline == null ||
+        this.basemapCompositePipeline == null ||
+        this.basemapEffectsBuffer == null
+      ) {
+        return;
+      }
+
+      this.ensureBasemapTarget();
+
+      if (
+        this.basemapTextureView == null ||
+        this.bloomMaskTextureView == null ||
+        this.bloomPingTextureView == null ||
+        this.bloomTextureView == null ||
+        this.basemapMaskBindGroup == null ||
+        this.bloomBlurXBindGroup == null ||
+        this.bloomBlurYBindGroup == null ||
+        this.basemapCompositeBindGroup == null
+      ) {
+        return;
+      }
     }
 
     const encoder = this.device.createCommandEncoder();
@@ -1537,7 +1575,7 @@ export class WebGpuMap {
     const pass = encoder.beginRenderPass({
       colorAttachments: [
         {
-          view: this.basemapTextureView,
+          view: effectsActive ? this.basemapTextureView! : view,
           clearValue: { r: 0.08, g: 0.08, b: 0.08, a: 1 },
           loadOp: 'clear',
           storeOp: 'store'
@@ -1548,7 +1586,7 @@ export class WebGpuMap {
     pass.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
     pass.setBindGroup(0, this.cameraBindGroup);
 
-    pass.setPipeline(this.tilePipeline);
+    pass.setPipeline(isBasemapShaderStyleActive(this.basemapStyle) ? this.tilePipeline : this.tileBasicPipeline);
     pass.setVertexBuffer(0, this.tileVertexBuffer);
     
     let fallbackDraws = 0;
@@ -1635,109 +1673,84 @@ export class WebGpuMap {
       pass.draw(6, 1, 0, 0);
     }
 
+    if (!effectsActive) {
+      this.drawOverlays(pass);
+    }
+
     pass.end();
 
-    const maskPass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: this.bloomMaskTextureView,
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
-          storeOp: 'store'
-        }
-      ]
-    });
+    if (effectsActive) {
+      if (bloomActive) {
+        const maskPass = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: this.bloomMaskTextureView!,
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: 'clear',
+              storeOp: 'store'
+            }
+          ]
+        });
 
-    maskPass.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
-    maskPass.setPipeline(this.basemapMaskPipeline);
-    maskPass.setBindGroup(0, this.basemapMaskBindGroup);
-    maskPass.draw(3, 1, 0, 0);
-    maskPass.end();
+        maskPass.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
+        maskPass.setPipeline(this.basemapMaskPipeline!);
+        maskPass.setBindGroup(0, this.basemapMaskBindGroup!);
+        maskPass.draw(3, 1, 0, 0);
+        maskPass.end();
 
-    const blurXPass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: this.bloomPingTextureView,
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
-          storeOp: 'store'
-        }
-      ]
-    });
+        const blurXPass = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: this.bloomPingTextureView!,
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: 'clear',
+              storeOp: 'store'
+            }
+          ]
+        });
 
-    blurXPass.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
-    blurXPass.setPipeline(this.basemapBlurXPipeline);
-    blurXPass.setBindGroup(0, this.bloomBlurXBindGroup);
-    blurXPass.draw(3, 1, 0, 0);
-    blurXPass.end();
+        blurXPass.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
+        blurXPass.setPipeline(this.basemapBlurXPipeline!);
+        blurXPass.setBindGroup(0, this.bloomBlurXBindGroup!);
+        blurXPass.draw(3, 1, 0, 0);
+        blurXPass.end();
 
-    const blurYPass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view: this.bloomTextureView,
-          clearValue: { r: 0, g: 0, b: 0, a: 0 },
-          loadOp: 'clear',
-          storeOp: 'store'
-        }
-      ]
-    });
+        const blurYPass = encoder.beginRenderPass({
+          colorAttachments: [
+            {
+              view: this.bloomTextureView!,
+              clearValue: { r: 0, g: 0, b: 0, a: 0 },
+              loadOp: 'clear',
+              storeOp: 'store'
+            }
+          ]
+        });
 
-    blurYPass.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
-    blurYPass.setPipeline(this.basemapBlurYPipeline);
-    blurYPass.setBindGroup(0, this.bloomBlurYBindGroup);
-    blurYPass.draw(3, 1, 0, 0);
-    blurYPass.end();
+        blurYPass.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
+        blurYPass.setPipeline(this.basemapBlurYPipeline!);
+        blurYPass.setBindGroup(0, this.bloomBlurYBindGroup!);
+        blurYPass.draw(3, 1, 0, 0);
+        blurYPass.end();
+      }
 
-    const view = this.context.getCurrentTexture().createView();
-    const overlayPass = encoder.beginRenderPass({
-      colorAttachments: [
-        {
-          view,
-          clearValue: { r: 0.08, g: 0.08, b: 0.08, a: 1 },
-          loadOp: 'clear',
-          storeOp: 'store'
-        }
-      ]
-    });
+      const overlayPass = encoder.beginRenderPass({
+        colorAttachments: [
+          {
+            view,
+            clearValue: { r: 0.08, g: 0.08, b: 0.08, a: 1 },
+            loadOp: 'clear',
+            storeOp: 'store'
+          }
+        ]
+      });
 
-    overlayPass.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
-    overlayPass.setPipeline(this.basemapCompositePipeline);
-    overlayPass.setBindGroup(0, this.basemapCompositeBindGroup);
-    overlayPass.draw(3, 1, 0, 0);
-    overlayPass.setBindGroup(0, this.cameraBindGroup);
-
-    if (this.geometryVertexCount > 0 && this.geometryPipeline && this.geometryVertexBuffer) {
-
-      overlayPass.setPipeline(this.geometryPipeline);
-      overlayPass.setVertexBuffer(0, this.geometryVertexBuffer);
-      overlayPass.draw(this.geometryVertexCount, 1, 0, 0);
-
+      overlayPass.setViewport(0, 0, this.canvas.width, this.canvas.height, 0, 1);
+      overlayPass.setPipeline(this.basemapCompositePipeline!);
+      overlayPass.setBindGroup(0, this.basemapCompositeBindGroup!);
+      overlayPass.draw(3, 1, 0, 0);
+      this.drawOverlays(overlayPass);
+      overlayPass.end();
     }
-
-    if (
-      this.lineSegmentCount > 0 &&
-      this.linePipeline &&
-      this.lineVertexBuffer &&
-      this.lineInstanceBuffer
-    ) {
-
-      overlayPass.setPipeline(this.linePipeline);
-      overlayPass.setVertexBuffer(0, this.lineVertexBuffer);
-      overlayPass.setVertexBuffer(1, this.lineInstanceBuffer);
-      overlayPass.draw(6, this.lineSegmentCount, 0, 0);
-
-    }
-
-    if (this.markerCount > 0 && this.markerPipeline && this.markerVertexBuffer && this.markerInstanceBuffer) {
-
-      overlayPass.setPipeline(this.markerPipeline);
-      overlayPass.setVertexBuffer(0, this.markerVertexBuffer);
-      overlayPass.setVertexBuffer(1, this.markerInstanceBuffer);
-      overlayPass.draw(6, this.markerCount, 0, 0);
-      
-    }
-
-    overlayPass.end();
     
     this.device.queue.submit([encoder.finish()]);
 
@@ -1758,6 +1771,37 @@ export class WebGpuMap {
       geometryVertexCount: this.geometryVertexCount,
       lineSegmentCount: this.lineSegmentCount
     });
+  }
+
+  private drawOverlays(pass: GPURenderPassEncoder) {
+    if (this.cameraBindGroup == null) return;
+
+    pass.setBindGroup(0, this.cameraBindGroup);
+
+    if (this.geometryVertexCount > 0 && this.geometryPipeline && this.geometryVertexBuffer) {
+      pass.setPipeline(this.geometryPipeline);
+      pass.setVertexBuffer(0, this.geometryVertexBuffer);
+      pass.draw(this.geometryVertexCount, 1, 0, 0);
+    }
+
+    if (
+      this.lineSegmentCount > 0 &&
+      this.linePipeline &&
+      this.lineVertexBuffer &&
+      this.lineInstanceBuffer
+    ) {
+      pass.setPipeline(this.linePipeline);
+      pass.setVertexBuffer(0, this.lineVertexBuffer);
+      pass.setVertexBuffer(1, this.lineInstanceBuffer);
+      pass.draw(6, this.lineSegmentCount, 0, 0);
+    }
+
+    if (this.markerCount > 0 && this.markerPipeline && this.markerVertexBuffer && this.markerInstanceBuffer) {
+      pass.setPipeline(this.markerPipeline);
+      pass.setVertexBuffer(0, this.markerVertexBuffer);
+      pass.setVertexBuffer(1, this.markerInstanceBuffer);
+      pass.draw(6, this.markerCount, 0, 0);
+    }
   }
 
   private installEvents() {
@@ -2070,6 +2114,7 @@ export class WebGpuMap {
     this.device = null;
     this.adapter = null;
     this.format = null;
+    this.tileBasicPipeline = null;
     this.tilePipeline = null;
     this.basemapMaskPipeline = null;
     this.basemapBlurXPipeline = null;

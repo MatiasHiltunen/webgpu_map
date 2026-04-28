@@ -36,8 +36,11 @@ fn vsMain(@builtin(vertex_index) vertexIndex : u32) -> VSOut {
 fn maskForColor(color : vec3<f32>) -> f32 {
   let tolerance = max(effects.targetColor.a, 0.001);
   let softness = max(effects.shape.y, 0.001);
-  let d = distance(color, effects.targetColor.rgb);
-  return 1.0 - smoothstep(tolerance - softness, tolerance + softness, d);
+  let delta = color - effects.targetColor.rgb;
+  let d2 = dot(delta, delta);
+  let lower = max(tolerance - softness, 0.0);
+  let upper = tolerance + softness;
+  return 1.0 - smoothstep(lower * lower, upper * upper, d2);
 }
 
 fn sampleColor(uv : vec2<f32>) -> vec3<f32> {
@@ -53,31 +56,39 @@ fn fsMain(in : VSOut) -> @location(0) vec4<f32> {
   let size = max(effects.viewport.xy, vec2<f32>(1.0));
   let texel = vec2<f32>(1.0) / size;
   let color = sampleColor(in.uv);
-  let mask = sampleMask(in.uv);
   let bloomIntensity = effects.bloom.a;
   let heightStrength = effects.shape.w;
   let reliefStrength = effects.viewport.z;
-  let bloom = textureSample(bloomTexture, compositeSampler, in.uv).rgb;
-
-  let hL = sampleMask(in.uv - vec2<f32>(texel.x, 0.0)) * heightStrength;
-  let hR = sampleMask(in.uv + vec2<f32>(texel.x, 0.0)) * heightStrength;
-  let hU = sampleMask(in.uv - vec2<f32>(0.0, texel.y)) * heightStrength;
-  let hD = sampleMask(in.uv + vec2<f32>(0.0, texel.y)) * heightStrength;
-  let normal = normalize(vec3<f32>((hL - hR) * reliefStrength, (hU - hD) * reliefStrength, 1.0));
-  let light = normalize(effects.light.xyz);
-  let shade = effects.light.a + max(dot(normal, light), 0.0) * (1.0 - effects.light.a);
+  let preview = effects.shape.z > 0.5;
+  var mask = 0.0;
+  var bloom = vec3<f32>(0.0);
   var outColor = color;
 
+  if (bloomIntensity > 0.0) {
+    bloom = textureSample(bloomTexture, compositeSampler, in.uv).rgb;
+  }
+
+  if (heightStrength > 0.0 || preview) {
+    mask = sampleMask(in.uv);
+  }
+
   if (heightStrength > 0.0) {
+    let hL = sampleMask(in.uv - vec2<f32>(texel.x, 0.0)) * heightStrength;
+    let hR = sampleMask(in.uv + vec2<f32>(texel.x, 0.0)) * heightStrength;
+    let hU = sampleMask(in.uv - vec2<f32>(0.0, texel.y)) * heightStrength;
+    let hD = sampleMask(in.uv + vec2<f32>(0.0, texel.y)) * heightStrength;
+    let normal = normalize(vec3<f32>((hL - hR) * reliefStrength, (hU - hD) * reliefStrength, 1.0));
+    let light = effects.light.xyz;
+    let shade = effects.light.a + max(dot(normal, light), 0.0) * (1.0 - effects.light.a);
     outColor *= mix(1.0, shade, mask);
     outColor += vec3<f32>(0.035) * mask * heightStrength;
   }
 
   outColor += bloom * bloomIntensity;
 
-  if (effects.shape.z > 0.5) {
-    let preview = mix(vec3<f32>(0.035, 0.04, 0.045), effects.bloom.rgb, mask);
-    return vec4<f32>(preview + bloom * 0.25, 1.0);
+  if (preview) {
+    let previewColor = mix(vec3<f32>(0.035, 0.04, 0.045), effects.bloom.rgb, mask);
+    return vec4<f32>(previewColor + bloom * 0.25, 1.0);
   }
 
   return vec4<f32>(clamp(outColor, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
@@ -120,8 +131,11 @@ fn vsMain(@builtin(vertex_index) vertexIndex : u32) -> VSOut {
 fn maskForColor(color : vec3<f32>) -> f32 {
   let tolerance = max(effects.targetColor.a, 0.001);
   let softness = max(effects.shape.y, 0.001);
-  let d = distance(color, effects.targetColor.rgb);
-  return 1.0 - smoothstep(tolerance - softness, tolerance + softness, d);
+  let delta = color - effects.targetColor.rgb;
+  let d2 = dot(delta, delta);
+  let lower = max(tolerance - softness, 0.0);
+  let upper = tolerance + softness;
+  return 1.0 - smoothstep(lower * lower, upper * upper, d2);
 }
 
 @fragment
