@@ -12,17 +12,34 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./features": {
+      "types": "./dist/features.d.ts",
+      "import": "./dist/features.js"
+    },
+    "./draw": {
+      "types": "./dist/draw.d.ts",
+      "import": "./dist/draw.js"
+    },
+    "./basemap-style": {
+      "types": "./dist/basemap-style.d.ts",
+      "import": "./dist/basemap-style.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:lib && npm run build:demo",
+    "build:lib": "tsc",
+    "build:demo": "vite build",
+    "dev": "vite --host 127.0.0.1",
+    "preview": "vite preview --host 127.0.0.1",
     "watch": "tsc -w"
   },
   "devDependencies": {
     "@webgpu/types": "0.1.64",
-    "typescript": "5.7.2"
+    "typescript": "5.7.2",
+    "vite": "^8.0.10"
   }
 }

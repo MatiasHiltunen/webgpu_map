@@ -4,14 +4,28 @@ This demo is based on the initial idea earlier that I got to work on a while bef
 
 _This is still currently a prototype at best._
 
-No runtime js-dependencies.
+No runtime js-dependencies. The demo app is bundled with Vite 8.
+
+The root package entry is intentionally small and only imports the basic raster
+map pipeline:
+
+```ts
+import { WebGpuMap } from 'webgpu-map'
+
+const map = new WebGpuMap({ canvas })
+await map.init()
+```
+
+Optional drawing and basemap postprocess APIs live behind separate ES module
+subpaths so consumers that only need the basic map do not import the extra WGSL
+shader modules.
 
 Minimal vector drawing is available through the same WebGPU canvas:
 
 ```ts
-import { WebGpuMap, line, polygon } from 'webgpu-map'
+import { WebGpuMapWithFeatures, line, polygon } from 'webgpu-map/features'
 
-const map = new WebGpuMap({ canvas })
+const map = new WebGpuMapWithFeatures({ canvas })
 
 map.setDrawGeometries([
   line([[24.9, 60.16], [25.0, 60.18]], { strokeColor: [0, 0.8, 1, 0.9], strokeWidth: 4 }),
@@ -42,6 +56,13 @@ map.setBasemapEffects({
   heightStrength: 0.45,
   maskPreview: false
 })
+```
+
+Development commands:
+
+```sh
+npm run dev
+npm run build
 ```
 
 Basemap effects render through an offscreen postprocess path. The current bloom

@@ -1,6 +1,5 @@
-import { WebGpuMap } from '../WebGpuMap.js';
-import type { BasemapEffectsParams, BasemapShaderParams } from '../lib/basemapStyle.js';
-import type { DrawStyle, GeoJson } from '../lib/drawtools.js';
+import { WebGpuMapWithFeatures } from '../features.js';
+import type { BasemapEffectsParams, BasemapShaderParams, DrawStyle, GeoJson } from '../features.js';
 
 type DemoCase = {
   readonly name: string;
@@ -593,7 +592,7 @@ const demoCases: readonly DemoCase[] = [
 
 const initialBasemap = basemapPresets[0]!;
 
-const map = new WebGpuMap({
+const map = new WebGpuMapWithFeatures({
   canvas,
   initialZoom: 11.1,
   initialCenter: { lat: 60.178, lng: 24.94 },
