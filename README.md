@@ -1,4 +1,4 @@
-# WebGPU Map Renderer Library
+# WebGPU Map Library
 
 The project includes raster tile loader and basic map utilities to allow rendering the Map and it's utilities on a single Canvas element using WebGPU.
 
