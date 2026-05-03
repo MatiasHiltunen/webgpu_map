@@ -162,6 +162,9 @@ export class WebGpuMap {
   private readonly opts: ResolvedWebGpuMapOptions;
 
   private destroyed = false;
+  private deviceLossGeneration = 0;
+  private recoveringDevice = false;
+  private eventsInstalled = false;
   private adapter: GPUAdapter | null = null;
   private device: GPUDevice | null = null;
   private context: GPUCanvasContext | null = null;
@@ -188,6 +191,7 @@ export class WebGpuMap {
   private tileCache: LruStore<TileRec> | null = null;
   private visibleTiles: VisibleTile[] = [];
   private visibleSignature = '';
+  private tileUniformBufferPool: GPUBuffer[] = [];
   private inflight = new Map<string, TileRec>();
   private basemapStyle: ResolvedBasemapShaderParams = DEFAULT_BASEMAP_SHADER_PARAMS;
   private activePointers = new Map<number, PointerSample>();
@@ -263,6 +267,50 @@ export class WebGpuMap {
     this.onDblClick = (e) => this.handleDblClick(e);
   }
 
+  private acquireTileUniformBuffer() {
+    if (this.device == null) throw new Error('WebGpuMap: device not ready');
+
+    return (
+      this.tileUniformBufferPool.pop() ??
+      this.device.createBuffer({
+        label: 'tile uniform buffer',
+        size: this.tileUniform.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+      })
+    );
+  }
+
+  private recycleTileUniformBuffer(tile: VisibleTile) {
+    if (tile.uniformBuffer) {
+      this.tileUniformBufferPool.push(tile.uniformBuffer);
+      tile.uniformBuffer = undefined;
+    }
+
+    tile.boundTextureKey = undefined;
+    tile.bindGroup = undefined;
+  }
+
+  private recycleVisibleTileUniformBuffers() {
+    for (const tile of this.visibleTiles) {
+      this.recycleTileUniformBuffer(tile);
+    }
+  }
+
+  private destroyTileUniformBuffers() {
+    for (const tile of this.visibleTiles) {
+      tile.uniformBuffer?.destroy();
+      tile.uniformBuffer = undefined;
+      tile.boundTextureKey = undefined;
+      tile.bindGroup = undefined;
+    }
+
+    for (const buffer of this.tileUniformBufferPool) {
+      buffer.destroy();
+    }
+
+    this.tileUniformBufferPool = [];
+  }
+
   setBasemapStyle(params: BasemapShaderParams) {
     this.basemapStyle = resolveBasemapShaderParams(params, this.basemapStyle);
     this.uploadBasemapStyle();
@@ -301,9 +349,7 @@ export class WebGpuMap {
     }
     this.inflight.clear();
 
-    for (const tile of this.visibleTiles) {
-      if (tile.uniformBuffer) tile.uniformBuffer.destroy();
-    }
+    this.recycleVisibleTileUniformBuffers();
     this.visibleTiles = [];
     this.visibleSignature = '';
 
@@ -833,9 +879,7 @@ export class WebGpuMap {
 
     if (signature === this.visibleSignature) return;
 
-    for (const oldTile of this.visibleTiles) {
-      if (oldTile.uniformBuffer) oldTile.uniformBuffer.destroy();
-    }
+    this.recycleVisibleTileUniformBuffers();
 
     this.visibleSignature = signature;
     this.visibleTiles = next;
@@ -1005,16 +1049,11 @@ export class WebGpuMap {
 
       if (!rec.view) continue;
 
-      if (!tile.uniformBuffer || tile.boundTextureKey !== rec.key) {
-        
-        if (tile.uniformBuffer) tile.uniformBuffer.destroy();
-        
-        tile.uniformBuffer = this.device.createBuffer({
-          label: 'tile uniform ' + tile.key,
-          size: 32,
-          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-        });
-        
+      if (!tile.uniformBuffer) {
+        tile.uniformBuffer = this.acquireTileUniformBuffer();
+      }
+
+      if (tile.boundTextureKey !== rec.key || tile.bindGroup == null) {
         tile.boundTextureKey = rec.key;
         
         tile.bindGroup = this.device.createBindGroup({
@@ -1071,7 +1110,8 @@ export class WebGpuMap {
   }
 
   private installEvents() {
-    
+    if (this.eventsInstalled) return;
+
     window.addEventListener('resize', this.onResize);
     
     this.canvas.addEventListener('pointerdown', this.onPointerDown);
@@ -1080,7 +1120,23 @@ export class WebGpuMap {
     this.canvas.addEventListener('pointercancel', this.onPointerCancel);
     this.canvas.addEventListener('wheel', this.onWheel, { passive: false });
     this.canvas.addEventListener('dblclick', this.onDblClick);
-    
+
+    this.eventsInstalled = true;
+  }
+
+  private uninstallEvents() {
+    if (!this.eventsInstalled) return;
+
+    window.removeEventListener('resize', this.onResize);
+
+    this.canvas.removeEventListener('pointerdown', this.onPointerDown);
+    this.canvas.removeEventListener('pointermove', this.onPointerMove);
+    this.canvas.removeEventListener('pointerup', this.onPointerUp);
+    this.canvas.removeEventListener('pointercancel', this.onPointerCancel);
+    this.canvas.removeEventListener('wheel', this.onWheel);
+    this.canvas.removeEventListener('dblclick', this.onDblClick);
+
+    this.eventsInstalled = false;
   }
 
   private handlePointerDown(event: PointerEvent) {
@@ -1207,6 +1263,83 @@ export class WebGpuMap {
     );
   }
 
+  private watchDeviceLoss(device: GPUDevice) {
+    const generation = ++this.deviceLossGeneration;
+
+    void device.lost.then((info) => {
+      if (this.destroyed || generation !== this.deviceLossGeneration) return;
+
+      console.warn('WebGPU device lost:', info.reason, info.message);
+      void this.recoverFromDeviceLoss();
+    });
+  }
+
+  private async recoverFromDeviceLoss() {
+    if (this.destroyed || this.recoveringDevice) return;
+
+    this.recoveringDevice = true;
+    this.stopKinetic();
+    this.releaseGpuResources(false);
+
+    try {
+      await this.init();
+    } catch (err) {
+      if (!this.destroyed) {
+        console.error('WebGpuMap: failed to recover from device loss', err);
+      }
+    } finally {
+      this.recoveringDevice = false;
+    }
+  }
+
+  private releaseGpuResources(destroyDevice: boolean) {
+    if (this.raf) {
+      cancelAnimationFrame(this.raf);
+      this.raf = 0;
+    }
+
+    this.needsFrame = false;
+
+    for (const [, rec] of this.inflight) {
+      rec.abort.abort();
+    }
+    this.inflight.clear();
+
+    this.destroyTileUniformBuffers();
+    this.visibleTiles = [];
+    this.visibleSignature = '';
+
+    this.tileCache?.clear();
+    this.tileCache = null;
+
+    if (this.context) {
+      this.context.unconfigure();
+      this.context = null;
+    }
+
+    this.tileVertexBuffer?.destroy();
+    this.cameraBuffer?.destroy();
+    this.basemapStyleBuffer?.destroy();
+    this.tileVertexBuffer = null;
+    this.cameraBuffer = null;
+    this.basemapStyleBuffer = null;
+
+    const device = this.device;
+    this.device = null;
+    this.adapter = null;
+    this.format = null;
+    this.tileBasicPipeline = null;
+    this.tilePipeline = null;
+    this.cameraBindGroup = null;
+    this.cameraBindGroupLayout = null;
+    this.tileBindGroupLayout = null;
+    this.sampler = null;
+
+    if (destroyDevice) {
+      device?.destroy();
+    }
+  }
+
   
   // Request adapter/device, build pipelines, start tile streaming and input. 
   async init(): Promise<void> {
@@ -1258,6 +1391,7 @@ export class WebGpuMap {
     this.adapter = adapter;
     
     this.device = await this.adapter.requestDevice();
+    this.watchDeviceLoss(this.device);
     
     this.context = this.canvas.getContext('webgpu');
 
@@ -1299,57 +1433,7 @@ export class WebGpuMap {
     this.destroyed = true;
 
     this.stopKinetic();
-    
-    if (this.raf) {
-      cancelAnimationFrame(this.raf);
-      this.raf = 0;
-    }
-
-    window.removeEventListener('resize', this.onResize);
-    
-    this.canvas.removeEventListener('pointerdown', this.onPointerDown);
-    this.canvas.removeEventListener('pointermove', this.onPointerMove);
-    this.canvas.removeEventListener('pointerup', this.onPointerUp);
-    this.canvas.removeEventListener('pointercancel', this.onPointerCancel);
-    this.canvas.removeEventListener('wheel', this.onWheel);
-    this.canvas.removeEventListener('dblclick', this.onDblClick);
-
-    for (const [, rec] of this.inflight) {
-      rec.abort.abort();
-    }
-    this.inflight.clear();
-
-    for (const t of this.visibleTiles) {
-      if (t.uniformBuffer) t.uniformBuffer.destroy();
-    }
-    
-    this.visibleTiles = [];
-    this.visibleSignature = '';
-
-    this.tileCache?.clear();
-    this.tileCache = null;
-
-    if (this.context) {
-      this.context.unconfigure();
-      this.context = null;
-    }
-
-    this.tileVertexBuffer?.destroy();
-    this.cameraBuffer?.destroy();
-    this.basemapStyleBuffer?.destroy();
-    this.tileVertexBuffer = null;
-    this.cameraBuffer = null;
-    this.basemapStyleBuffer = null;
-
-    this.device?.destroy();
-    this.device = null;
-    this.adapter = null;
-    this.format = null;
-    this.tileBasicPipeline = null;
-    this.tilePipeline = null;
-    this.cameraBindGroup = null;
-    this.cameraBindGroupLayout = null;
-    this.tileBindGroupLayout = null;
-    this.sampler = null;
+    this.uninstallEvents();
+    this.releaseGpuResources(true);
   }
 }
