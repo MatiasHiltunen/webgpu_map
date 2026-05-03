@@ -1,6 +1,17 @@
-# Experimental WebGPU Map renderer
+# WebGPU Map Library
 
-This demo is based on the initial idea earlier that I got to work on a while before I got carried away with other stuff: https://github.com/Leaflet/Leaflet/discussions/9207
+The project includes raster tile loader and basic map utilities to allow rendering the Map and it's utilities on a single Canvas element using WebGPU.
+
+Check the demo to try out fe. postprocessing to select certain range of colors to pop-out on map and how to customize the standard OSM based tiles to fit any website's theme easily.
+
+<img width="1721" height="1023" alt="Näyttökuva 2026-04-29 132532" src="https://github.com/user-attachments/assets/f6e5517f-1601-4256-bc09-2f257bd5baef" />
+<img width="1920" height="1065" alt="la" src="https://github.com/user-attachments/assets/6c8a1794-2c65-49c2-a969-722ecd27fa2d" />
+
+Check the live demo here: https://matiashiltunen.github.io/webgpu_map/
+- Should work if webgpu is supported by your device
+
+
+This project is based on the initial idea earlier that I got to work on for while before I got carried away with other stuff: https://github.com/Leaflet/Leaflet/discussions/9207
 
 _This is still currently a prototype at best._
 
@@ -69,5 +80,4 @@ Basemap effects render through an offscreen postprocess path. The current bloom
 implementation creates a color mask from the selected basemap pixels and runs
 separable blur passes before compositing it back to the map.
 
-Check the live demo here: https://matiashiltunen.github.io/webgpu_map/
-- Should work if webgpu is supported by your device
+
